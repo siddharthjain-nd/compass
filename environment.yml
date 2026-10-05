@@ -1,0 +1,16 @@
+# conda env create -f environment.yml && conda activate compass
+# then: bash scripts/setup_third_party.sh   (SAM 2 + EdgeTAM at pinned commits, patch, checkpoints)
+# EdgeTAM is not installed (its package is also named `sam2`); scripts put third_party/EdgeTAM on sys.path.
+name: compass
+channels: [defaults]
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      - torch
+      - torchvision
+      - opencv-python
+      - numpy
+      - pillow
+      - matplotlib
+      - timm
