@@ -42,6 +42,11 @@ It must do this **without being trained on concepts like "pocket", "drawer" or "
 - [x] `experiments/synthetic_tracking.py`: six synthetic scenarios (occlusion + lookalike wallets) with known ground truth.
   - Renders a video per scenario: input | mask overlay | verdict per frame | mask-area and visibility-score charts.
   - Results page: `experiments/output/index.html`.
+- [x] **E1** (fast/slow tracking) and **E2** (the "still looks like my object?" check): see `RESEARCH.md` §8.
+  - `experiments/e1_fast_slow.py` → `experiments/output/e1/index.html`
+  - `experiments/e2_gated_memory.py` → `experiments/output/e2/index.html`
+- [x] **E2b** (follow the hand that took the object): 335/336 frames, 0 on the other wallet, 8/8 final answers on drawn scenes. See `RESEARCH.md` §8.3.
+  - `experiments/e2b_follow_holder.py` → `experiments/output/e2b/index.html`
 
 ### Findings so far
 
@@ -206,16 +211,44 @@ When several tracks reappear after a shared occlusion, assign identities with th
 
 ### Phase 1: Live tracker on the Mac
 
-- [ ] `FrameSource` interface with three implementations: Mac webcam, iPhone (Continuity Camera), video file.
-- [ ] Streaming EdgeTAM wrapper:
-  - add an object by click or box;
+> **Status (2026-10-06): first live version built.** Run it with `python -m compass.live`.
+> - The tracker, the B check and "follow the hand" now live in the `compass/` package, shared with the experiments.
+> - **Verified:**
+>   - the streaming tracker gives masks identical to the offline tracker (120/120) and holds flat memory over 900 frames (2.0 GB);
+>   - E2b reproduced on the shared code: 334/336 frames, 8/8 final answers;
+>   - replaying real videos as a live camera: ~4.2 fps processed, 0.26 s lag;
+>   - mug held in a hand: stays "visible" and never highlights the hand;
+>   - cups shuffle at live speed: right cup only 41% of the time, as E1 predicted for about 5 fps.
+> - **Not verified yet:** the real Mac camera. macOS has to grant camera access to your terminal on the first run.
+>
+> **Fixes after the first live test (2026-10-06).** Reported: the mask disappears when the wallet is turned while the screen still says "visible", and the system keeps "following the hand" after the wallet is put down. Reproduced on a real replay (EdgeTAM's blocks video) with per-frame logs.
+> 1. **"Visible" with no mask was a bug:** "object-sized but doesn't look like it" had no state. Added **unsure** (grey outline).
+> 2. **Turning the object:** a 30–45° turn drops similarity to 0.79–0.89, right at the 0.85 cutoff.
+>    - Fix: the check now compares against the registration view plus 10 rotated/mirrored copies, and learns new angles while tracking.
+>    - Turned block: 0.85–0.89 → 0.97–0.99.
+> 3. **Calibration bug:** "typical similarity" was learned from the first live frames, which could already show the object half in a hand (0.15). Thresholds are now absolute against the registration.
+> 4. **Hand-off delay:**
+>    - The search ran every 3rd held frame (~1.2 s apart); now every frame (~0.45 s).
+>    - It also compared against the un-turned view only (fixed by 2).
+> 5. **Lost objects were never searched for.** At live speed the tracker often *loses* a grabbed object ("covered") instead of sliding onto the hand.
+>    - Added whole-picture re-detection while lost: a wallet put down elsewhere is found 0.2 s later.
+>    - With lookalikes around, a re-found object is shown only as "maybe here": on the blocks table the search picked a different blue block (similarity 0.88).
+> 6. Session logs are now saved automatically to `clips/sessions/`.
+>
+> Regression after all fixes: drawn scenes unchanged (334/336, 8/8), mug unchanged. **Next:** a real hand detector (covered vs in a hand at live speed, plus hand-path evidence to resolve "maybe here"), then speed (E5).
+
+- [x] Frame sources: Mac camera and a video file replayed as if live (`compass/sources.py`). No iPhone available.
+- [x] Streaming EdgeTAM wrapper (`compass/tracker.py`):
+  - add an object by box;
   - output a mask and visibility score per frame;
-  - keep the memory bank bounded.
-- [ ] Live overlay viewer with an fps counter.
-- [ ] Mask sanity check (§4.2): area and shape first, appearance in Phase 2.
+  - bounded memory.
+- [x] Live overlay viewer with fps, lag and the current state; `c` records raw clips to `clips/` (`compass/live.py`).
+- [ ] Multiple objects at once (v1 tracks one).
+- [x] Mask sanity check (§4.2) on the output, E2's variant B (`compass/appearance.py`), plus "follow the hand", E2b (`compass/holder.py`). Both are in the live app.
 - [ ] Clip recorder, for building the test suite (§6). **(E0)**
-- [ ] **Fast/slow tracking:** 30 fps optical-flow / point propagation between EdgeTAM keyframes; identity matched at 30 fps. **(E1)**
-- [ ] **Gated memory:** only write frames that pass the sanity check into EdgeTAM's memory bank. **(E2)**
+- [x] ~~**Fast/slow tracking** with optical flow~~ **(E1): rejected.** Flow loses cups in fast, blurred swaps. Keep EdgeTAM at ≥ 15 fps instead, which makes speed (E5) the priority.
+- [ ] **Gated memory (E2 variant C):** postponed. It makes the tracker re-find objects, but with a lookalike present it can re-find the wrong one. Revisit when the identity check (E4) can confirm re-finds.
+- [ ] **Speed (E5), moved up:** Core ML / Neural Engine for the video path, lower input resolution, fewer memory frames. Target ≥ 15 fps for 1 object.
 
 **Exit criteria:**
 - Click an object and the mask follows it live at ≥ 4 fps.
@@ -242,7 +275,7 @@ When several tracks reappear after a shared occlusion, assign identities with th
 
 - [ ] Occluder segmentation at the last-seen spot.
 - [ ] Disappearance classifier (the four types in §4.3).
-- [ ] Holder tracking and naming.
+- [ ] Holder tracking and naming. **Prototype done on drawn scenes (E2b):** held / out-of-view states and the hand-off rule. Next: a real hand detector, and test on E0 clips.
 - [ ] Optional people add-on: MediaPipe hands and pose, giving hand and pocket zones.
 
 **Exit criteria:** the correct disappearance type and holder on the occluder test clips.
@@ -396,6 +429,9 @@ compass/
 ├── PLAN.md                 ← this file
 ├── RESEARCH.md             ← literature review + experiment plan (E0–E8)
 ├── environment.yml         ← conda env spec
+├── compass/                ← the package: models, tracker (streaming), appearance (B check),
+│                              holder (follow the hand), sources (camera/video), live (app), video_io
+├── clips/                  ← clips recorded with the live app (git-ignored)
 ├── scripts/
 │   ├── check_env.py        ← model load + speed/occlusion check
 │   └── setup_third_party.sh← re-creates third_party/ (pinned commits + patches + checkpoints)
@@ -406,14 +442,16 @@ compass/
 │   ├── sam2/               ← SAM 2.1 (pip -e installed, checkpoints/ tiny+small)
 │   └── EdgeTAM/            ← EdgeTAM (loaded via sys.path, checkpoints/edgetam.pt)
 └── (planned)
-    ├── compass/            ← package: sources/ tracking/ identity/ scene/ memory/ reasoner/
-    ├── clips/              ← recorded test clips + ground-truth JSON
     └── tests/
 ```
 
 ```bash
 conda env create -f environment.yml && conda activate compass
 bash scripts/setup_third_party.sh       # clones SAM 2 + EdgeTAM at pinned commits, applies patches/, downloads checkpoints
+pip install -e .                        # installs the compass package (python -m compass.live from any folder)
+
+python -m compass.live                 # LIVE: Mac camera; SPACE, draw a box around the object, ENTER; c = record clip
+python -m compass.live --video third_party/EdgeTAM/examples/04_coffee.mp4   # replay a video as if live
 
 python scripts/check_env.py            # EdgeTAM (default) with the MPS attention patch
 python scripts/check_env.py tiny       # SAM 2.1 tiny

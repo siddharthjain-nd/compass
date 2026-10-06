@@ -19,3 +19,6 @@ experiments/output/
 .DS_Store
 .vscode/
 .idea/
+
+# Clips recorded with the live app (press c); raw test videos, kept out of git
+clips/

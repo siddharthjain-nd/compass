@@ -110,6 +110,8 @@ So the next level is not a bigger model. It is **separating the four jobs and gi
 
 ### 4.1 Fast/slow tracking: make identity independent of the heavy model's fps (fixes D1, D3)
 
+> **Tested in E1 (2026-10-06): not supported on the cups clip.** See §8.1.
+
 **Idea:**
 - A **cheap tracker runs at 30 fps** on every frame. Optical flow or sparse point tracks inside each mask, plus a Kalman filter on the box. CPU cost is a few ms.
 - **EdgeTAM runs at 5–10 fps** as the *corrector*, re-anchoring each mask on keyframes.
@@ -125,6 +127,8 @@ So the next level is not a bigger model. It is **separating the four jobs and gi
 - Compare with pure stride 1 (0 swaps) and pure stride 6 (several swaps).
 
 ### 4.2 Gated memory: only write what you trust (fixes D2)
+
+> **Tested in E2 (2026-10-06):** the output check is adopted; memory gating is postponed until E4. See §8.2.
 
 **Idea (SAM 3 / SENTRY spirit, simplified):** before a frame's mask enters EdgeTAM's memory bank, it must pass three checks:
 1. area and shape are consistent with recent frames;
@@ -172,8 +176,8 @@ Each experiment is small (1–3 days), has one hypothesis, and is measured on th
 | # | Experiment | Hypothesis | Metric | Needs |
 |---|---|---|---|---|
 | **E0** | **Benchmark set.** Cups clip (have it) plus ~10 real clips: 2 similar wallets, hand grab, bag, drawer, cloth. Hand-labelled identity at keyframes. | — | ID swaps, holder-drift frames, final-location accuracy, fps | Camera + your objects |
-| **E1** | **Fast/slow tracking** (§4.1) | Stride-6 EdgeTAM + 30 fps flow matches stride-1 identity at about ⅕ of the compute | swaps on cups, ms/frame | nothing new |
-| **E2** | **Gated memory** (§4.2) | Removes drift onto the hand | holder frames on `taken_*` + real grabs | nothing new |
+| **E1** ✔ done | **Fast/slow tracking** (§4.1) | Stride-6 EdgeTAM + 30 fps flow matches stride-1 identity at about ⅕ of the compute | swaps on cups, ms/frame | **Rejected** on the cups clip (§8.1) |
+| **E2** ✔ done | **Gated memory** (§4.2) | Removes drift onto the hand | holder frames on `taken_*` + real grabs | **Output check adopted; memory gating postponed** (§8.2) |
 | **E3** | **DAM-style distractor memory on EdgeTAM** (port from DAM4SAM, Apache-2.0) | Fewer swaps at 15 fps without extra cost | swaps at stride 2 and 6 | DAM4SAM code |
 | **E4** | **Identity verifier** (§4.3) | Local matching separates two similar wallets where global features don't | ROC-AUC | 2 similar wallets |
 | **E5** | **Speed on Mac.** Core ML full video path (community port) vs MPS vs lower input resolution | ≥ 10 fps for 1 object on the M2 | ms/frame and accuracy drop | coremltools |
@@ -181,12 +185,13 @@ Each experiment is small (1–3 days), has one hypothesis, and is measured on th
 | **E7** | **SAM 3 / 3.1 reference run** (cloud GPU or offline) | An upper bound to compare against: how far is EdgeTAM + our fixes from the strongest tracker? | same metrics | GPU access, gated checkpoints |
 | **E8** | **Edge bake-off.** Same pipeline and clips on Jetson (TensorRT) and/or Qualcomm (AI Hub EdgeTAM) | Meets the fps target for 1–4 objects | fps, identity metrics vs Mac | hardware access |
 
-**Order and why:**
-1. **E0 first:** nothing can be claimed without real clips.
-2. **E1 and E2 next:** they're the cheapest and attack the two failures we have actually measured.
-3. **E3 and E4:** they need the E0 clips.
-4. **E5 and E6** finish the Mac version.
-5. **E7 and E8** inform the edge move.
+**Order and why** (revised 2026-10-06 after E1/E2):
+1. **E1 and E2:** done (§8).
+2. **E5, speed, now comes first.** E1 showed that nothing cheap replaces EdgeTAM frames during fast swaps of identical objects. About 15 fps of EdgeTAM is needed, and the M2 manages about 5 fps for one object.
+3. **E0:** real clips. Every remaining hypothesis was tested only on one hard clip or on drawings.
+4. **E4:** the identity check. It also unblocks memory gating (E2's variant C), which needs a way to confirm what it re-finds. The ambiguous cases left by E2b (both lookalikes handled at once) also need it.
+5. **Follow the hand on real video:** E2b worked on drawings; add a hand detector and test on E0 clips.
+6. **E3, E6**, then **E7 and E8** for the edge move.
 
 ---
 
@@ -212,13 +217,123 @@ Each experiment is small (1–3 days), has one hypothesis, and is measured on th
 
 ## 7. What would change this plan
 
-- **If E1 already fixes the cups swaps,** fast/slow tracking becomes the core architecture, and we may not need DAM (E3) at all.
+- ~~**If E1 already fixes the cups swaps,** fast/slow tracking becomes the core architecture.~~ It didn't (§8.1), so DAM (E3) and raw speed (E5) stay on the plan.
 - **If E5 finds no path to ≥ 10 fps on the M2,** the Mac stays a development box, and we move to edge hardware earlier.
 - **If a released efficient SAM 3 variant shows real edge numbers** (EfficientSAM3, or whatever follows SAM 3.1), re-evaluate the tracker choice. Its detector-based re-anchoring addresses D2 natively.
 
 ---
 
-## 8. Sources
+## 8. Results
+
+### 8.1 E1: fast/slow tracking (real cups clip)
+
+**Setup:**
+- **Clip:** 3 identical red cups + a ball, 300 frames at 30 fps.
+- **Reference:** EdgeTAM on every frame. I checked it by eye at 9 moments, and the ball is revealed under CUP 1, the cup that covered it.
+- **Scoring:** a cup is correct on a frame if its mask overlaps the reference mask of the same cup (IoU ≥ 0.5), over 300 frames × 3 cups.
+- **Code:** `experiments/e1_fast_slow.py`. Results page: `experiments/output/e1/index.html`.
+
+**E1a: flow corrections at a fixed EdgeTAM rate** (all frames correct):
+
+| EdgeTAM rate | alone | + flow, warp | + flow, shift | + perfect prior |
+|---|---|---|---|---|
+| 5 fps | 40% | 47% | 24% | **91%** |
+| 10 fps | 61% | 67% | 25% | **95%** |
+| 15 fps | **90%** | 71% | 26% | 98% |
+
+**E1b: the same EdgeTAM compute, placed differently** (all frames correct):
+
+| Budget | evenly spaced | where the motion is | every 3rd + fast moments |
+|---|---|---|---|
+| 33% of frames | 61% | 67% | (same as even) |
+| 50% of frames | **90%** | 74% | 87% |
+
+**What we learned:**
+1. **The correction mechanism works.** Re-initialising a cup from a correct box takes 5 fps EdgeTAM from 40% to 91%.
+   - A plain re-prompt doesn't work: EdgeTAM's memory overrides the box, so the cup's confused recent memory has to be cleared.
+2. **Cheap optical flow is not a reliable enough prior.**
+   - It carries cups well across most gaps: median IoU 0.9, and it fails in only 10 of 140 six-frame gaps.
+   - But those failures are the fast, blurred swaps, which decide identity.
+   - A correction from a wrong prior is worse than none.
+3. **No frame-scheduling trick beat evenly spaced frames at 50% budget.**
+   - This clip moves almost all the time (median 7.5 px/frame at ¼ resolution).
+   - **A failed first attempt:** skipping frames inside one tracker session left gaps in EdgeTAM's frame-indexed memory (56–60%). It must only ever see the frames it processes.
+4. **Compute on the M2** (4 objects, one tracker per object sharing the encoder): 15 fps EdgeTAM costs about 8 s of compute per 1 s of video. Real time needs under 1 s.
+   - **Conclusion:** speed (E5), not cleverness, is the lever for fast identical-object shuffles.
+
+**Limits:**
+- One deliberately hard clip.
+- The reference is EdgeTAM itself, verified by eye only at sampled moments.
+- Motion gating may still save compute in **calm** scenes, which this clip doesn't have. Retest it on E0 clips.
+
+### 8.2 E2: the "does it still look like my object?" check (synthetic scenes)
+
+**Setup:**
+- **The check** compares the tracker's mask with the object at frame 0, using size plus DINOv2 ViT-S/14 appearance. It uses no ground truth.
+- **The rule:**
+  - grown more than 1.5× → reject;
+  - partial view (under 0.7× size) → show if similarity ≥ 0.75, never remember;
+  - normal size → show and remember if similarity ≥ 0.85.
+- **Code:** `experiments/e2_gated_memory.py`. Results page: `experiments/output/e2/index.html`.
+
+| Scenario | A: tracker alone | **B: check on the output** | C: + check also gates memory |
+|---|---|---|---|
+| occlusion (key partly covered) | 30/30 | **30/30** | 25/30 |
+| placed nearby / touching / hand covers | 40 / 40 / 40 | **40 / 40 / 40** | 40 / 40 / 40 |
+| taken, part sticking out | 23/45 | 30/45 | 38/45, **5 frames on the other wallet** |
+| taken, hidden in fist | 23/45 | **45/45** | 44/45, 1 frame on the other wallet |
+| moved, other wallet present | 15/48 | **30/48** | 30/48, **18 frames on the other wallet** |
+| moved, no other wallet (control) | 46/48 | 47/48 | 48/48 |
+
+**What we learned:**
+1. **Adopt B.**
+   - It removes the "highlighting the hand" mistakes (taken, hidden: 23 → 45/45).
+   - It causes no regressions and never picks the other wallet.
+   - Its misses are honest: "can't see it" rather than a wrong object.
+2. **C (memory gating) does what §4.2 predicted, and also something it didn't.**
+   - **As predicted:** the tracker itself follows the hand far less (hand frames 22 → 7–9).
+   - **Not predicted:** with a clean memory, the tracker searches again, and with a lookalike present it locks onto the **wrong** wallet.
+   - Being confidently wrong is the worst failure for this product, so C waits for E4: a re-found object must pass the identity check before it is accepted.
+3. **"Moved" with a lookalike is unsolved by A, B and C.** Appearance can't tell which wallet the hand carried. This needs holder tracking (§4.4, Phase 3).
+4. **The rule needed one fix.** v1 used a single similarity threshold and wrongly rejected partial views (30 → 16 on occlusion). The partial-view threshold (0.75) was set after seeing these values, so real clips must confirm it.
+
+**Limits:** drawn scenes only; thresholds not validated on real video yet.
+
+### 8.3 E2b: follow the hand that took the object (synthetic scenes)
+
+**Setup:**
+- **Variant D** = B + a state per frame: visible / covered / **held** / out of view / unknown.
+- **How "held" starts:** the tracker's mask suddenly grows onto something bigger. That bigger thing is the hand, and we follow it, using EdgeTAM's own drift onto it.
+- **Hand-off rule:** while held, look for object-looking things where the hand is or just was. Ignore lookalikes already seen elsewhere, at registration or when the hand took the object. Confirm with the E2 appearance check, then restart the tracker on the find.
+- **Finding object-looking things:** peaks of DINOv2 patch similarity, each outlined by SAM. No training.
+- **Code:** `experiments/e2b_follow_holder.py`. Results page: `experiments/output/e2b/index.html`.
+
+| Scenario | A | B | **D** | D's final answer |
+|---|---|---|---|---|
+| occlusion | 30/30 | 30/30 | **30/30** | key visible ✔ |
+| placed nearby / touching / hand covers | 40 / 40 / 40 | 40 / 40 / 40 | **40 / 40 / 40** | wallet visible ✔ |
+| taken, part sticking out | 23/45 | 30/45 | **45/45** | carried out of view to the left ✔ |
+| taken, hidden in fist | 23/45 | 45/45 | **45/45** | carried out of view to the left ✔ |
+| moved, other wallet present | 15/48 | 30/48 | **48/48** | wallet at its new spot (400, 120) ✔ |
+| moved, no other wallet | 46/48 | 47/48 | 47/48 | wallet at its new spot ✔ |
+| **All 8** | 257/336 (76%) | 302/336 (90%) | **335/336 (99.7%)** | **8/8** |
+
+D puts **0 frames on the other wallet**.
+
+**What we learned:**
+1. **The hand path is what tells identical objects apart.** "Moved" with a lookalike went 15 → 48/48. The wallet that appears where the hand put something down is yours, and the identical one lying elsewhere is ignored.
+2. **D can now say where the object went**, which A and B cannot: "carried out of view to the left", "at its new spot".
+3. **v1 failed instructively.** One thresholded region per object-looking area merged two wallets 70 px apart, so the other wallet wasn't recorded as "already elsewhere" and was picked (25 wrong frames). Outlining each peak separately with SAM fixed it.
+
+**Limits (important):**
+- Drawn scenes with rectangle hands, and only 8 of them.
+- The hand is followed by the tracker's drift. Real video needs a hand detector (e.g. MediaPipe), and real hands occlude, rotate and pass objects between each other.
+- The rule assumes lookalikes stay put while the object is held. If both wallets are handled at once, or the hand puts yours right next to the other one, it must fall back to the identity check (E4) or say "ambiguous".
+- Thresholds (peak height, 40 px reach, 6-frame memory) were set by design, and adjusted once after v1. Not tuned on real data.
+
+---
+
+## 9. Sources
 
 **Checked here (✔):**
 - VET-Bench, "Can Vision-Language Models Solve the Shell Game?" (Mar 2026): https://arxiv.org/abs/2603.08436

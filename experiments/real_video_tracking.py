@@ -18,13 +18,14 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT / "scripts"), str(ROOT / "third_party" / "EdgeTAM")]
+sys.path[:0] = [str(ROOT), str(ROOT / "scripts"), str(ROOT / "third_party" / "EdgeTAM")]
 
 import cv2
 import numpy as np
 import torch
 
 from check_env import patch_attention_for_mps
+from compass.video_io import make_web_playable
 
 OUT = ROOT / "experiments" / "output"
 VIDEO = ROOT / "third_party" / "EdgeTAM" / "examples" / "02_cups.mp4"
@@ -159,6 +160,7 @@ def main():
     for k in range(len(frames)):
         writer.write(cv2.resize(render(frames[k], masks[k], visible, k, src_idx[k], fps_label), size, interpolation=cv2.INTER_AREA))
     writer.release()
+    make_web_playable(f"{stem}.mp4")
 
     keys = np.linspace(0, len(frames) - 1, 6).astype(int)
     tiles = []

@@ -25,13 +25,14 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT / "scripts"), str(ROOT / "third_party" / "EdgeTAM")]
+sys.path[:0] = [str(ROOT), str(ROOT / "scripts"), str(ROOT / "third_party" / "EdgeTAM")]
 
 import cv2
 import numpy as np
 import torch
 
 from check_env import patch_attention_for_mps
+from compass.video_io import make_web_playable
 
 OUT = ROOT / "experiments" / "output"
 SIZE = 512
@@ -144,6 +145,45 @@ def taken(visible_in_hand, n=45):
     return frames, wallet_box(a)
 
 
+def moved(with_other=True, n=48):
+    """(Optionally) the other wallet lies next to yours. A hand grabs yours (hidden in the fist), carries it
+    to the top right, puts it down there and leaves. Tests whether the tracker finds YOUR wallet there."""
+    a, b, dest = (180, 300), (330, 300), (400, 120)
+
+    def hand(img, x, y):
+        cv2.rectangle(img, (x - 55, y - 45), (x + 55, y + 45), HAND, -1)
+        cv2.rectangle(img, (x - 20, y - 45), (x + 20, 0), HAND, -1)
+
+    frames = []
+    for i in range(n):
+        img = table()
+        if with_other:
+            wallet(img, b)
+        hidden, pos = False, a
+        if i < 15:
+            wallet(img, a)
+            where = "your wallet and the other wallet lie on the table"
+        elif i < 20:
+            wallet(img, a)
+            hand(img, *a)
+            hidden, where = True, "a hand covers your wallet and grabs it"
+        elif i < 30:
+            t = (i - 20) / 10
+            pos = (int(a[0] + (dest[0] - a[0]) * t), int(a[1] + (dest[1] - a[1]) * t))
+            hand(img, *pos)
+            hidden, where = True, "the hand carries your wallet (inside its fist) to a new spot"
+        else:
+            pos = dest
+            wallet(img, dest)
+            hy = dest[1] - 80 - (i - 30) * 15  # hand lifts away above the wallet
+            if hy + 45 > 0:
+                hand(img, dest[0], hy)
+            where = "your wallet was put down at a new spot; the hand leaves"
+        frames.append((img, {"obj": "wallet", "A": pos, "A_half": WALLET_HALF, "B": b if with_other else None,
+                             "hidden": hidden, "where": where}))
+    return frames, wallet_box(a)
+
+
 SCENARIOS = {  # name -> (what happens, what the tracker should do, scene)
     "occlusion": ("Your key slides along and a hand covers most of it.",
                   "Keep highlighting the visible tip of your key, never the hand.", occlusion),
@@ -160,6 +200,14 @@ SCENARIOS = {  # name -> (what happens, what the tracker should do, scene)
     "taken_hidden": ("Someone picks up your wallet, hidden inside the fist, and walks off. The other wallet stays.",
                      "Highlight nothing while your wallet is covered or inside the fist (it can't be seen). "
                      "Never the other wallet.", lambda: taken(False)),
+    "moved": ("Someone picks up your wallet (hidden in the fist), puts it down at a new spot and leaves. "
+              "The other wallet stays.",
+              "Highlight nothing while it is in the fist, then your wallet at its new spot. Never the other wallet.",
+              moved),
+    "moved_alone": ("Someone picks up your wallet (hidden in the fist), puts it down at a new spot and leaves. "
+                    "No other wallet.",
+                    "Highlight nothing while it is in the fist, then your wallet at its new spot.",
+                    lambda: moved(with_other=False)),
 }
 
 # ---------------------------------------------------------------- tracking + grading
@@ -509,6 +557,7 @@ def main():
         for fi in range(len(frames)):
             writer.write(render(run, fi))
         writer.release()
+        make_web_playable(OUT / f"{name}.mp4")
         cv2.imwrite(str(OUT / f"{name}.png"), contact_sheet(run))
         results[name] = run
         ok = sum(g == e for g, e in zip(run["got"], run["exp"]))
