@@ -57,6 +57,12 @@ class Appearance:
     def embed(self, img_bgr, mask):
         return self._embed_crops([self._crop(img_bgr, mask)])[0]
 
+    def embed_boxes(self, img_bgr, boxes):
+        """Embeddings of plain box crops (no mask), in one batch: used to check whether a spot looks like the object."""
+        crops = [cv2.cvtColor(cv2.resize(img_bgr[y0:y1, x0:x1], (224, 224)), cv2.COLOR_BGR2RGB)
+                 for x0, y0, x1, y1 in boxes]
+        return self._embed_crops(crops)
+
     def embed_views(self, img_bgr, mask, angles=REGISTRATION_ANGLES, mirror=True):
         """Embeddings of the object rotated by each angle (about its centre), plus a mirrored copy, in one batch."""
         ys, xs = np.nonzero(mask)
@@ -110,6 +116,14 @@ class Gate:
                 learned = True
         return show, remember, {"area": area, "sim": round(sim, 3), "kind": kind, "show": show,
                                 "remember": remember, "learned_view": learned}
+
+    def learn(self, img, mask):
+        """Add this view to the known looks if it is new (used when another cue says it IS the object, e.g. it was
+        seen turning). Also counts its size as normal."""
+        sim, e = self.similarity(img, mask)
+        self.areas.append(int(mask.sum()))
+        if sim < NEW_VIEW:
+            self.learned.append(e)
 
     def confirm(self, img, mask):
         """Stateless version for candidates: object-sized and looks like the object (partial views allowed)."""

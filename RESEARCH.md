@@ -184,8 +184,10 @@ Each experiment is small (1–3 days), has one hypothesis, and is measured on th
 | **E6** | **Event VLM.** Qwen3-VL-4B (mlx-vlm), given the tracker state as text vs given raw frames only | Tracker state turns wrong guesses into right ones on bag and hand events | accuracy on E0 events, seconds per event | ~4 GB download |
 | **E7** | **SAM 3 / 3.1 reference run** (cloud GPU or offline) | An upper bound to compare against: how far is EdgeTAM + our fixes from the strongest tracker? | same metrics | GPU access, gated checkpoints |
 | **E8** | **Edge bake-off.** Same pipeline and clips on Jetson (TensorRT) and/or Qualcomm (AI Hub EdgeTAM) | Meets the fps target for 1–4 objects | fps, identity metrics vs Mac | hardware access |
+| **E9** | **Explain the change** (PLAN.md Phase 1b): blocked / turned / closer-farther / something else, from an expected outline + 5 cheap signals | Separable without a hand detector; never "turned" when blocked | label accuracy per frame on drawn scenes + blocks/mug replays + user clips; fps | nothing new |
 
-**Order and why** (revised 2026-10-06 after E1/E2):
+**Order and why** (revised 2026-10-07 after the first live tests):
+0. **E9 first:** the live tests showed users can't tell *why* the object is "not sure" (blocked vs turned vs moved closer). This is cheap and needs no new hardware or models. Then the hand detector.
 1. **E1 and E2:** done (§8).
 2. **E5, speed, now comes first.** E1 showed that nothing cheap replaces EdgeTAM frames during fast swaps of identical objects. About 15 fps of EdgeTAM is needed, and the M2 manages about 5 fps for one object.
 3. **E0:** real clips. Every remaining hypothesis was tested only on one hard clip or on drawings.
@@ -332,6 +334,39 @@ D puts **0 frames on the other wallet**.
 - Thresholds (peak height, 40 px reach, 6-frame memory) were set by design, and adjusted once after v1. Not tuned on real data.
 
 ---
+
+### 8.4 E9: explain the change + hand detector (2026-10-07)
+
+**Built:**
+- `compass/explain.py`: blocked / turned / closer-farther / something else.
+- `compass/hands.py`: MediaPipe hand landmarker.
+- Both are wired into `compass/holder.py` and the live app, together with a mirrored front-camera view.
+
+**Results:**
+
+| Test | Result |
+|---|---|
+| Controlled edits of a real block image (14 cases) | 14/14; angles and scales measured within 1° / 0.01× |
+| E9 drawn scenes (6 scenes, 264 scored frames) | **263/264, 0 critical** (never "turned" while blocked, never "blocked" while turned, never "taken by a hand" when moved closer, never claims the identical twin) |
+| E2b drawn scenes (regression) | 335/336, 8/8 final answers |
+| Blocks replay (real) | "taken by your right hand", then "put down at (806, 331)" ✔ |
+| Mug replay (real) | all "visible" ✔ |
+| Cups replay (real, identical, fast) | still mostly the wrong cup at live speed (11/31 right) ✘, a known limit (E1) |
+| Hands | ~24 ms/frame; hands found in 75–100% of frames |
+
+**What the iterations taught us** (each was found by tracing frame-by-frame logs):
+1. **Explain *partial* views that still pass the look check, too.** A half-covered object often passes, and otherwise was never explained.
+2. **Refresh the reference view only from complete views.** A view taken while a book was already sliding in made the book part of the "background".
+3. **The best blocker signal is a change *just outside* the missing part.** A blocker reaches beyond the object; turning or flipping leaves the surroundings alone. Compare smoothed images, so pixel noise doesn't count.
+4. **When the object is gone, only ask "is it still in its exact place?"** Searching nearby found the identical twin next to it.
+5. **Identical objects pass any look check.** Only *where* they were seen tells them apart, so a jump onto a known lookalike spot is never claimed.
+6. **A scale estimate must agree with the area change**, or a few matched details on a mask that spread onto a blocker read as "farther".
+7. **In a hand-off, prefer the object's last spot and compare all candidates.** Taking the first that passed picked a wrong block.
+8. **Remember lookalikes as spots, not outlines.** Outlining 40 with SAM cost 0.7–1 s at start-up and at the moment of a grab.
+
+**Limits:**
+- The thresholds were set on drawn scenes, and the left/right hand labels were checked on one video.
+- **Not yet run on the real Mac camera.**
 
 ## 9. Sources
 

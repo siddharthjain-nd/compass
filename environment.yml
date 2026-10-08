@@ -10,7 +10,8 @@ dependencies:
   - pip:
       - torch
       - torchvision
-      - opencv-python
+      - opencv-contrib-python   # (mediapipe needs the contrib build; never install both)
+      - mediapipe
       - numpy
       - pillow
       - matplotlib

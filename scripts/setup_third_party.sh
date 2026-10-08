@@ -51,6 +51,11 @@ for m in tiny small; do
 done
 # EdgeTAM ships edgetam.pt inside its repo, so no download is needed.
 
+# MediaPipe hand landmarker (Google, Apache-2.0), used by compass/hands.py.
+mkdir -p "$TP/models"
+download https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task \
+  "$TP/models/hand_landmarker.task"
+
 # SAM 2 is pip-installed (without its optional CUDA extension). EdgeTAM is NOT installed:
 # its package is also named `sam2`, so our scripts put third_party/EdgeTAM first on sys.path.
 if python -c "import sam2" 2>/dev/null; then

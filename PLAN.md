@@ -254,6 +254,122 @@ When several tracks reappear after a shared occlusion, assign identities with th
 - Click an object and the mask follows it live at ≥ 4 fps.
 - When a hand grabs it, the object is flagged as held/covered instead of the tracker silently following the hand.
 
+### Phase 1b: Explain why the object looks different (E9) + hand detector — built 2026-10-07
+
+> **Status:** built and tested on drawn scenes and real replays. **Not yet tested on the real Mac camera.**
+> - **Hands** (`compass/hands.py`): MediaPipe hand landmarker, ~24 ms per frame on the CPU.
+>   - Hands found in 100% / 95% / 75% of frames in the mug / cups / blocks videos; the 75% is correct, because the hands do leave that picture.
+>   - Left/right labels checked on one video (the watch hand is labelled left).
+> - **Explainer** (`compass/explain.py`): the expected outline from matching details (ORB + a RANSAC similarity fit gives the angle and scale), plus the content of the missing part and whether the area just outside it changed.
+>   - Controlled edits of a real block image: **14/14** (turned 20/40/90°, measured 20.3/39.4/90.3°; ×1.5 and ×0.7, measured ×1.49/×0.70; half-blocked by something / by a hand; flipped; tracker jumped; covered; removed; still there).
+> - **Drawn scenes (E9): 263/264 frames correct, 0 critical mistakes.** `experiments/output/e9/index.html`.
+>   - **Caution:** the explainer was fixed several times against these same scenes; the regressions and real replays below are the independent check.
+> - **Regressions:** E2b drawn scenes 335/336, 8/8 final answers; mug replay all "visible".
+> - **Real replays:**
+>   - **blocks:** "taken by your right hand", then "put down at (806, 331)", the correct spot. An earlier version picked a wrong block, which is why the search now prefers the object's last spot and compares all candidates.
+>   - **cups:** "partly hidden by your hand (71% visible)" while shuffling. Identical cups moving fast are **still mostly mis-tracked** at live speed (right cup 11/31): a speed and identity problem (E5, E4), not an explanation problem.
+> - **Speed:**
+>   - start-up ~0.4 s (was 1.5–2 s; lookalikes are now remembered as spots, not SAM outlines);
+>   - ~250 ms per frame while visible, ~3–3.6 fps in replays (the hand detector + explainer cost ~0.5 fps).
+
+**Fixes from the first live sessions with hands (2026-10-08).** Session logs showed "not sure" in 17–65% of frames while the wallet was held.
+- **Cause:** a partly visible wallet between the fingers (6–35% of its size, look 0.3–0.7) never entered "in your hand". That only happened when the mask spread onto the hand or vanished under it.
+- **Fixes:**
+  - **Wallet touching a detected hand** with an unexplained look, or under 30% visible → **"in your hand"**. The visible part is shown in blue when its look is ≥ 0.45.
+  - **Lookalike spots** count only if a box crop there looks like the object (≥ 0.75). Unchecked spots made front-camera re-finds "maybe".
+  - **Hand-off:**
+    - reject candidates that were already lying there when the hand took the object;
+    - decide by **matching small details** (ORB inliers against the last good view): a first version of E4;
+    - in a scene with many lookalikes, a look-only match is just "maybe".
+- **Blocks stress test** (30+ similar blocks, 3 runs): pickups caught; every confident "put down" was at the correct spot (decided by 56–136 matching details vs ≤ 4 for wrong blocks); wrong spots appeared only as "maybe".
+- **Regressions:** E2b 334/336 (8/8 final answers), E9 263/264 (0 critical), mug and cups unchanged.
+- **Real camera speed** (from logs): 375–430 ms/frame (~2.3–2.7 fps), slower than replays, so E5 matters.
+
+**Review list (to check together on the real camera):**
+1. **Left/right hand labels** on the Mac camera: they were checked on one video only.
+2. **"In your hand, partly visible"** uses a looser look threshold (0.6) when a detected hand holds the object: does it show the right thing?
+3. **The explainer's thresholds** were set on drawn scenes:
+   - surrounding change ≥ 15% → "partly hidden";
+   - colour distances 15–18;
+   - turned ≥ 12°;
+   - closer ≥ 1.25×.
+4. **The mirrored view:** the box drawn on the mirrored picture is converted back, and left/right messages are swapped. Check the exit messages on the real camera.
+5. **Speed on the real camera** with everything on.
+
+
+**Why:** "not sure" used to cover several different situations: something is in front of the object, the object was turned, the object moved closer to or farther from the camera, or the tracker jumped to something else. The user can't tell which one is happening, and the right reaction differs for each.
+
+**Target states** (they replace the single "not sure"):
+
+| Situation | Shown as | Message |
+|---|---|---|
+| **Blocked:** something is in front of part of it | blue on the visible part | "partly hidden behind something (60% visible)" |
+| **Turned:** whole object visible, new angle or other side | blue (the new angle is learned) | "visible, turned ~40°" / "visible, other side up" |
+| **Closer / farther:** same outline, just bigger or smaller (front camera) | blue | "visible, moved closer" |
+| **Something else:** the tracker jumped | grey | "not sure, this may be something else" |
+
+**Evidence it's feasible.** In the blocks replay, "in the hand" and "turned" already separate by size alone:
+
+| Moment | Size vs normal | Look similarity |
+|---|---|---|
+| Block in the hand (blocked) | 5–7% | 0.17–0.23 |
+| Block put down turned | 97–100% | 0.71–0.81 |
+
+One signal isn't enough in general, so the decision combines several.
+
+**How:**
+1. **Expected outline:** the last good outline, moved by the motion since then (optical flow).
+2. **Signals:**
+
+| # | Signal | Blocked | Turned | Closer/farther | Something else |
+|---|---|---|---|---|---|
+| 1 | Share of the expected outline still covered by the mask | low | high | high after rescaling | low, the mask is elsewhere |
+| 2 | What fills the missing part | **something new** (neither the object's old look nor nearby background) | background / table | — | — |
+| 3 | Do the visible pieces match the same pieces from before? (DINOv2 patch tokens, reused from the existing pass) | **yes** | not piece by piece | yes after rescaling | no |
+| 4 | Does a rotation explain it? (ORB/SIFT detail matching) | — | **yes**, gives the angle | — | no |
+| 5 | Motion inside the outline (optical flow) | something slides in from outside | **swirls around the centre** | expands / contracts | jump, no continuity |
+
+3. **Decision:**
+   - **Blocked:** (1) low + (2) new + (3) yes.
+   - **Turned:** (1) high and either (4) a rotation, or (5) swirling with no new content.
+   - **Closer/farther:** (1) high after rescaling + (5) expanding or contracting. This also stops the size rule from calling "moved closer" "taken by a hand".
+   - **Something else:** none of the above.
+4. **Turned and closer/farther stay blue**, and the new look is added to the look bank.
+5. **Cost:** about 15–20 ms per frame on top of ~240 ms (flow ~5, outline comparison ~2, patch tokens ~0–5, ORB ~5–10).
+
+**Front-camera items** (MacBook camera facing the user):
+- [x] **Left/right from the user's point of view.** The picture isn't mirrored, so "out of view to the left" currently means the *camera's* left. Add a mirrored display (`--mirror`, default on for the built-in camera) and phrase sides from the user's view.
+- [x] **"Closer/farther"** (above): moving the object toward the camera must not trigger the "grown → taken by a hand" rule. The scale has to agree with the area change.
+- [x] **Hand detector** (MediaPipe): "in your right hand", following that hand, and "partly hidden by your hand".
+
+**Tasks:**
+- [x] Drawn test scenes with known answers:
+  - wallet slowly covered by a book from the side;
+  - wallet turned in place 0→90°;
+  - wallet flipped over;
+  - a hand partly over it;
+  - wallet moved toward / away from the camera (scaling);
+  - the tracker deliberately switched to the other wallet.
+- [x] `compass/explain.py`: the expected outline + the 5 signals + the decision. Plug it into `ObjectState` (replacing the single "unsure"), the live display and the session log.
+- [x] Experiment `experiments/e9_explain.py`, with a results page, as before.
+- [x] Real replays:
+  - blocks video: the block in the hand should be "blocked", and the block put down should be "turned";
+  - mug video: lifted toward the camera should be "closer/farther" or "visible".
+- [ ] The user's own clips (press `c`): wallet half under paper vs turned vs moved toward the camera, filmed with the front camera.
+
+**Exit criteria:**
+- Right label on ≥ 90% of frames in the drawn scenes.
+- **Never "turned" when something is blocking.**
+- No regressions on E2b (334/336, 8/8) or the mug replay.
+- Live speed stays ≥ 3.5 fps.
+
+**Known limits:**
+- **Turned onto its edge** (thin side visible) looks a lot like blocked.
+- **A side never seen before** gives no detail match, so it relies on motion and continuity.
+- **A blocker the same colour as the table** is hard to spot as "something new".
+
+**Done in the same step:** the hand detector (MediaPipe Hands) names the blocker when it's a hand ("partly hidden by your hand", "in your hand") and gives the hand's path for the lookalike cases.
+
 ### Phase 2: Registration and identity
 
 - [ ] Registration CLI:
@@ -429,8 +545,8 @@ compass/
 ├── PLAN.md                 ← this file
 ├── RESEARCH.md             ← literature review + experiment plan (E0–E8)
 ├── environment.yml         ← conda env spec
-├── compass/                ← the package: models, tracker (streaming), appearance (B check),
-│                              holder (follow the hand), sources (camera/video), live (app), video_io
+├── compass/                ← the package: models, tracker (streaming), appearance (B check), explain (E9),
+│                              hands (MediaPipe), holder (states + follow the hand), sources, live (app), video_io
 ├── clips/                  ← clips recorded with the live app (git-ignored)
 ├── scripts/
 │   ├── check_env.py        ← model load + speed/occlusion check

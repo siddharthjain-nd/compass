@@ -32,6 +32,7 @@ except ModuleNotFoundError as e:
 
 WINDOW = "Compass"
 BLUE, YELLOW, RED, INK, PANEL, GREY = (229, 135, 57), (25, 178, 250), (59, 59, 208), (255, 255, 255), (25, 26, 26), (183, 194, 195)
+HAND = (150, 200, 230)
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 
 
@@ -45,31 +46,50 @@ def text(img, s, org, scale=0.6, color=INK, thick=1):
     cv2.putText(img, s, org, FONT, scale, color, thick, cv2.LINE_AA)
 
 
-def draw(frame, step, status, hint, event, recording):
+def as_seen_by_user(text_, mirror):
+    """Exit sides are computed in camera coordinates; in a mirrored (selfie) view, left and right swap.
+    Hand names ("your left hand") are the person's own and are not swapped."""
+    if not mirror or not text_:
+        return text_
+    return (text_.replace("to the left", "to the @R").replace("to the right", "to the left")
+            .replace("to the @R", "to the right"))
+
+
+def outline(vis, mask, colour, thickness, edge=False):
+    contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if edge:
+        cv2.drawContours(vis, contours, -1, INK, thickness + 2, cv2.LINE_AA)  # white edge: visible on any colour
+    cv2.drawContours(vis, contours, -1, colour, thickness, cv2.LINE_AA)
+
+
+def draw(frame, step, status, hint, event, recording, mirror=False):
     vis = frame.copy()
     if step is not None:
+        for hand in step.hands:  # every detected hand, faintly
+            outline(vis, hand.mask, HAND, 1)
         if step.mask.any():
             tint = vis.copy()
             tint[step.mask] = BLUE
             vis = cv2.addWeighted(tint, 0.45, vis, 0.55, 0)
-            contours, _ = cv2.findContours(step.mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            cv2.drawContours(vis, contours, -1, INK, 5, cv2.LINE_AA)  # white edge: visible on any colour
-            cv2.drawContours(vis, contours, -1, BLUE, 3, cv2.LINE_AA)
+            outline(vis, step.mask, BLUE, 3, edge=True)
         unconfirmed = step.maybe if step.maybe is not None else step.raw if step.state == "unsure" else None
         if unconfirmed is not None and unconfirmed.any():  # grey outline: seen, but not confirmed as your object
-            contours, _ = cv2.findContours(unconfirmed.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            cv2.drawContours(vis, contours, -1, GREY, 2, cv2.LINE_AA)
+            outline(vis, unconfirmed, GREY, 2)
         if step.holder is not None:
-            contours, _ = cv2.findContours(step.holder.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            cv2.drawContours(vis, contours, -1, YELLOW, 3, cv2.LINE_AA)
+            outline(vis, step.holder, YELLOW, 3)
+    if mirror:
+        vis = cv2.flip(vis, 1)  # text is drawn after flipping, so it stays readable
     h, w = vis.shape[:2]
     cv2.rectangle(vis, (0, 0), (w, 64), PANEL, -1)
-    headline = step.describe() if step is not None else "Not tracking yet"
+    headline = as_seen_by_user(step.describe(), mirror) if step is not None else "Not tracking yet"
     color = {"visible": BLUE, "held": YELLOW}.get(step.state if step else "", INK)
-    text(vis, headline, (14, 30), 0.8, color, 2)
+    size = 0.8 if w >= 1000 else max(0.45, 0.8 * w / 1000)  # narrow pictures: smaller text, so it fits
+    while cv2.getTextSize(headline, FONT, size, 2)[0][0] > w - 28 and size > 0.35:
+        size -= 0.05
+    text(vis, headline, (14, 30), size, color, 2)
     text(vis, status, (14, 54), 0.5)
     if event:
-        text(vis, event, (14, 92), 0.6, YELLOW)
+        text(vis, as_seen_by_user(event, mirror), (14, 92), 0.6, YELLOW)
     if recording:
         cv2.circle(vis, (w - 24, 24), 9, RED, -1, cv2.LINE_AA)
         text(vis, "REC", (w - 80, 30), 0.6, RED, 2)
@@ -84,6 +104,10 @@ def main():
     ap.add_argument("--box", type=parse_box, help="x0,y0,x1,y1: start tracking this box on the first frame")
     ap.add_argument("--finder-every", type=int, default=1,
                     help="while the object is in a hand, look for the hand-off every N processed frames (default 1)")
+    ap.add_argument("--no-hands", action="store_true", help="don't run the hand detector (MediaPipe)")
+    ap.add_argument("--mirror", action=argparse.BooleanOptionalAction, default=None,
+                    help="mirror the picture like a selfie view, with left/right from your side "
+                         "(default: on for the camera, off for a video file)")
     ap.add_argument("--headless", action="store_true", help="no window (needs --box); use with --out/--report")
     ap.add_argument("--out", help="write the annotated video here")
     ap.add_argument("--report", help="write per-frame states, timings and events here (JSON)")
@@ -106,8 +130,14 @@ def main():
     from compass.tracker import StreamingTracker
 
     dev = device()
+    hands = None
+    if not args.no_hands:
+        from compass.hands import HandDetector
+
+        hands = HandDetector()
     obj = ObjectState(StreamingTracker(video_predictor(dev)), Appearance(dev), Finder(dev), Segmenter(dev),
-                      finder_every=args.finder_every)
+                      finder_every=args.finder_every, hands=hands)
+    mirror = args.mirror if args.mirror is not None else not args.video
     src = VideoSource(args.video) if args.video else CameraSource(args.camera)
     print(f"source: {'video ' + args.video if args.video else 'camera ' + str(args.camera)} at {src.fps:.0f} fps", flush=True)
 
@@ -126,13 +156,13 @@ def main():
             seq = new_seq
             t0 = time.time()
             if not tracking and args.box is not None:
-                step, tracking = obj.start(frame, args.box), True
+                step, tracking = obj.start(frame, args.box, t_ms=captured * 1000), True
             elif tracking:
-                step = obj.update(frame)
+                step = obj.update(frame, t_ms=captured * 1000)
                 for _, e in step.events:
                     last_event, event_until = e, time.time() + 3
                     report["events"].append({"camera_frame": seq, "event": e})
-                    print(f"[frame {seq}] {e}", flush=True)
+                    print(f"[frame {seq}] {as_seen_by_user(e, mirror)}", flush=True)
             proc_times.append(time.time() - t0)
             fps = len(proc_times) / sum(proc_times) if tracking and sum(proc_times) else 0
             lag = time.time() - captured
@@ -140,12 +170,12 @@ def main():
             status = (f"{fps:.1f} fps processed | lag {lag:.2f} s | camera frames used {processed}/{src.frames_seen}"
                       if tracking else "Press SPACE and draw a box around your object")
             vis = draw(frame, step if tracking else None, status, hint, last_event if time.time() < event_until else "",
-                       src.recording)
+                       src.recording, mirror)
             if tracking and args.save_masks:
                 saved["frame"].append(seq)
                 saved["mask"].append(cv2.resize(step.mask.astype(np.uint8), (320, 180), interpolation=cv2.INTER_NEAREST))
             if tracking:
-                report["frames"].append({"camera_frame": seq, "state": step.state, "detail": step.detail,
+                report["frames"].append({"camera_frame": seq, "state": step.state, "detail": step.detail, "note": step.note,
                                          "shown": bool(step.mask.any()), "score": round(step.score, 2),
                                          "process_s": round(proc_times[-1], 3), "lag_s": round(lag, 3),
                                          "dropped_before": dropped, "debug": step.debug})
@@ -159,10 +189,13 @@ def main():
                 if key in (ord("q"), 27) or cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) < 1:
                     break  # q, ESC, or the window was closed
                 if key in (ord(" "), ord("r")):
-                    box = cv2.selectROI(WINDOW, frame, showCrosshair=True)  # x, y, w, h; ENTER confirms
+                    shown = cv2.flip(frame, 1) if mirror else frame
+                    box = cv2.selectROI(WINDOW, shown, showCrosshair=True)  # x, y, w, h; ENTER confirms
                     if box[2] > 0 and box[3] > 0:
                         x, y, w, h = box
-                        step, tracking = obj.start(frame, (x, y, x + w, y + h)), True
+                        if mirror:  # the box was drawn on the mirrored picture
+                            x = frame.shape[1] - (x + w)
+                        step, tracking = obj.start(frame, (x, y, x + w, y + h), t_ms=captured * 1000), True
                         proc_times.clear()
                         report = {"frames": [], "events": []}
                 if key == ord("c") and isinstance(src, CameraSource):
