@@ -55,6 +55,9 @@ done
 mkdir -p "$TP/models"
 download https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task \
   "$TP/models/hand_landmarker.task"
+# MediaPipe selfie multiclass segmenter (clothes), used by compass/body.py for pockets.
+download https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite \
+  "$TP/models/selfie_multiclass_256x256.tflite"
 
 # SAM 2 is pip-installed (without its optional CUDA extension). EdgeTAM is NOT installed:
 # its package is also named `sam2`, so our scripts put third_party/EdgeTAM first on sys.path.

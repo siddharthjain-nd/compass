@@ -285,6 +285,38 @@ When several tracks reappear after a shared occlusion, assign identities with th
 - **Regressions:** E2b 334/336 (8/8 final answers), E9 263/264 (0 critical), mug and cups unchanged.
 - **Real camera speed** (from logs): 375–430 ms/frame (~2.3–2.7 fps), slower than replays, so E5 matters.
 
+**Real-camera test (E0) + pocket (2026-10-09).** `experiments/e0_real_clips.py` → `experiments/output/e0/index.html`.
+- **Six clips recorded with the live app** (MacBook camera, 15 fps, 4.3 min): hold/turn, put down/pick up, paper cover, closer/farther (with the camera tilted), pocket, two similar wallets.
+- **Replay:** every 5th frame (3 fps ≈ live speed), the same every time.
+- **Labels:** written from per-second contact sheets.
+
+| Clip | Baseline | After fixes |
+|---|---|---|
+| hold & turn | 86% | 95% |
+| put down / pick up | 84% | 100% |
+| paper cover | 71% | 98% |
+| closer / farther (+ camera tilt) | 98% | 99% |
+| pocket | 60% (no pocket yet) | **100%** ("taken by your right hand" → "put into your right pocket") |
+| two similar wallets | 100% | 100% (never on the other wallet) |
+| **All** | **86%** | **99% (615/624)** |
+
+**Fixes (each from the clips' decision logs):**
+- A hand touching **≥ 15%** of the visible part counts: hands holding from below touched only 13–30%.
+- **< 25% visible + something new in front → "covered"** (not when the object still shows in place, nor at the picture edge).
+- **Strong change around + decent look → "partly hidden"** (a paper's shadow broke colour matching).
+- **Tracker bug:** pruned restart frames stayed in EdgeTAM's index, and after many restarts it crashed. This could also have hit long live sessions.
+
+**Pocket** (`compass/body.py`, MediaPipe selfie segmenter for clothes):
+- **Body pose was tried and rejected:** it needs a face, and with the head out of view it put "hips" on the table.
+- **Rule:** the object vanishes while the holding hand is at the clothes (2 frames); then the hand moves away or leaves the picture, or stays ~2.5 s → **"in your right pocket"** (side = the hand that put it there).
+- **Stays "in your pocket"** until the object clearly passes the look check again.
+- **Cost:** ~120 ms, only while the object is hidden in a hand.
+
+**Cautions:**
+- These rules were tuned while looking at these same clips. The independent checks still pass (drawn scenes 334/336 and 263/264; blocks and mug replays unchanged; no false pockets).
+- **One label was changed after the first run:** pocket clip frames 246–305, "pocket" → "going into the pocket". The hand was still at the pocket there.
+- **More clips** (other rooms, lighting, objects) are needed before calling it general.
+
 **Review list (to check together on the real camera):**
 1. **Left/right hand labels** on the Mac camera: they were checked on one video only.
 2. **"In your hand, partly visible"** uses a looser look threshold (0.6) when a detected hand holds the object: does it show the right thing?
@@ -411,15 +443,40 @@ One signal isn't enough in general, so the decision combines several.
 ### Phase 6: Evaluation and speed
 
 - [ ] Scenario test suite running on the recorded clips, reporting the metrics in §6.
-- [ ] Core ML for the Neural Engine. Note: EdgeTAM's own export covers the **image path only**, so the video memory path needs the community port or our own split. **(E5)**
-- [ ] Tune input resolution and the number of memory frames.
+- [x] **Speed research for many objects** (2026-10-09): `RESEARCH.md` §9, timing probe `experiments/e5_speed_probe.py`.
+  - Per object per frame ~120 ms, of which memory attention is 64 ms, almost all spent on the *whole-frame* query grid.
+  - Plan: per-object work only for **active** objects and only **around** the object; shared work once per frame.
+- [x] **One object faster, round 1** (2026-10-11, `RESEARCH.md` §9.8):
+  - visible 404 → ~220 ms (2.5 → ~4.5 fps); in hand 813 → ~465 ms (1.2 → ~2.1 fps); live replay 3.9 fps;
+  - E0 616/624.
+  - **Changes:**
+    - faster picture prep;
+    - hands in parallel;
+    - search reuses the tracker's features;
+    - clothes reused 1 s;
+    - batched checks;
+    - skip while nothing changes;
+    - window around the object (`compass/window.py`).
+  - **Live app flags:** `--no-window`, `--no-skip` to compare.
+- [x] **Round 2** (2026-10-12, `PROGRESS.md`):
+  - hidden states watched in a window (covered / held / pocket), the whole picture only when lost;
+  - two pocket-rule fixes found by a new clip;
+  - search pre-check (tried; off by default: no net gain on a quiet Mac);
+  - explainer on a crop (same answers, 3.3× faster);
+  - 8 clips 794/807;
+  - quiet Mac: covered 475 → 169 ms, pocket 188 → 133 ms, visible and in hand unchanged.
+- [ ] **Round 3:** Core ML for the image step, torch.compile try, 768 px input if still needed (E5c); cheaper pre-check crops.
+- [x] **E5a** window around the object: memory step 62 → 22 ms for the (large) wallet; masks match the whole-frame tracker (mean IoU 0.989).
+- [ ] **E5b** multiple objects, "watch cheaply, track on wake": a resting object costs only a pixel-change check in its box; the accurate tracker runs (in a window) only for objects that moved or a hand neared, until they rest again (`RESEARCH.md` §9.8).
+- [ ] **E5c** encoder input size 1024 / 768 / 512. **E5d** helpers (hands, appearance check) at their own pace. **E5e** window the memory encoder + decoder too.
+- [ ] Core ML for the Neural Engine: lower priority. Community ports of the memory path run on CPU + GPU, not the Neural Engine (◐).
 - [ ] Port DAM4SAM's distractor-aware memory to EdgeTAM (identity switches **did** show up on the real cups clip). **(E3)**
 - [ ] SAM 3 / 3.1 reference run on a cloud GPU, as an upper bound. **(E7)**
 - [ ] Compare against **TCOW** on the container / occluder clips.
 
 ### Phase 7: Edge and distributed (later)
 
-- [ ] **Edge bake-off (E8):** the same pipeline and clips on Jetson (TensorRT) and/or Qualcomm (AI Hub ships EdgeTAM, ~17 ms/frame int8, unverified). Pick hardware from the measurements.
+- [ ] **Edge bake-off (E8), hardware not decided yet** (user decides later from what works on the Mac). Known: Jetson + TensorRT is the best-proven fast route (fixed-shape engines suit the windowed memory step). Qualcomm's AI Hub EdgeTAM runs memory attention on the CPU (checked).
 - [ ] **Hailo / Rockchip:** detection only; their compilers can't run the tracker's transformer.
 - [ ] Cloud only for event clips and long-history questions, not continuous video.
 - [ ] **Distributed:**
@@ -494,7 +551,7 @@ Priority: **H** = soon after the core works, **M** = valuable later, **L** = nic
 
 | Idea | What it adds | Priority |
 |---|---|---|
-| Motion gating | Skip heavy models while the scene is static; saves power on edge devices | H |
+| Motion gating | Skip heavy models while the scene is static; saves power on edge devices. Now planned per object as E5b ("resting objects sleep") | H |
 | Core ML / Neural Engine | Faster tracking on Mac and iPhone | M |
 | Confidence calibration | So "70% yours" really means 70% | M |
 
@@ -543,16 +600,20 @@ Priority: **H** = soon after the core works, **M** = valuable later, **L** = nic
 ```
 compass/
 ├── PLAN.md                 ← this file
-├── RESEARCH.md             ← literature review + experiment plan (E0–E8)
+├── RESEARCH.md             ← literature review + experiment plan (E0–E9), speed research (§9)
+├── PROGRESS.md             ← step-by-step log: what we tried, numbers, decisions
+├── progress/data/          ← small per-step result summaries (tracked; experiments/output/ is not)
 ├── environment.yml         ← conda env spec
 ├── compass/                ← the package: models, tracker (streaming), appearance (B check), explain (E9),
-│                              hands (MediaPipe), holder (states + follow the hand), sources, live (app), video_io
+│                              hands (MediaPipe), body (clothes), holder (states + follow the hand), window (track
+│                              only around the object), sources, live (app), video_io
 ├── clips/                  ← clips recorded with the live app (git-ignored)
 ├── scripts/
 │   ├── check_env.py        ← model load + speed/occlusion check
 │   └── setup_third_party.sh← re-creates third_party/ (pinned commits + patches + checkpoints)
 ├── patches/                ← our fixes to third-party code (EdgeTAM multi-object reshape)
-├── experiments/            ← synthetic_tracking.py, real_video_tracking.py
+├── experiments/            ← e0_real_clips.py (real-clip score), e5_time_breakdown.py (where time goes),
+│                              e5a_window.py, e5_speed_probe.py, progress_snapshot.py, e1/e2/e2b/e9 scripts, ...
 │   └── output/             ← generated videos + index.html (git-ignored; re-run the scripts)
 ├── third_party/            ← git-ignored; created by setup_third_party.sh
 │   ├── sam2/               ← SAM 2.1 (pip -e installed, checkpoints/ tiny+small)

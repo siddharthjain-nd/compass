@@ -99,7 +99,7 @@ So the next level is not a bigger model. It is **separating the four jobs and gi
 | Platform | Best evidence | |
 |---|---|---|
 | **Mac (M2)** | PyTorch MPS: our numbers. EdgeTAM's own Core ML export covers **image segmentation only, no video memory path**. A community full-video Core ML port claims about 10 fps (unverified). MLX gives about 1.3× over MPS. | ✔ export scope / ◐ rest |
-| **Qualcomm** (QCS8550 / IQ-9075) | Qualcomm AI Hub ships EdgeTAM: about 17 ms per frame at int8 for encoder + memory encoder + decoder. The best-evidenced edge number. It's unclear whether memory attention fully runs on the NPU. | ◐ |
+| **Qualcomm** (QCS8550 / IQ-9075) | Qualcomm AI Hub ships EdgeTAM: about 17 ms per frame at int8 for encoder + memory encoder + decoder. **Memory attention runs on the CPU** (their code, checked 2026-10-09, §9.2). | ◐ numbers / ✔ CPU |
 | **NVIDIA Jetson** | SAM2-base with TensorRT: about 6 fps on Orin Nano Super, 7 fps on Orin NX. A community SAM2.1 build on Thor: 26.5 fps for 1 object. **No published EdgeTAM TensorRT number.** We would have to measure. | ◐ |
 | **Hailo / Rockchip** | Image-only SAM variants; the compilers choke on transformers. Detector use only. | ◐ |
 | **Cloud GPU** | EdgeTAM at about 150 fps on an A100. But continuous 720p upload is 2–5 Mbps (≈1–2 GB/hour per camera), and it is a privacy problem for in-home video. | ◐ |
@@ -180,7 +180,7 @@ Each experiment is small (1–3 days), has one hypothesis, and is measured on th
 | **E2** ✔ done | **Gated memory** (§4.2) | Removes drift onto the hand | holder frames on `taken_*` + real grabs | **Output check adopted; memory gating postponed** (§8.2) |
 | **E3** | **DAM-style distractor memory on EdgeTAM** (port from DAM4SAM, Apache-2.0) | Fewer swaps at 15 fps without extra cost | swaps at stride 2 and 6 | DAM4SAM code |
 | **E4** | **Identity verifier** (§4.3) | Local matching separates two similar wallets where global features don't | ROC-AUC | 2 similar wallets |
-| **E5** | **Speed on Mac.** Core ML full video path (community port) vs MPS vs lower input resolution | ≥ 10 fps for 1 object on the M2 | ms/frame and accuracy drop | coremltools |
+| **E5** | **Speed for many objects** (§9): window memory attention, sleeping objects, encoder size, helpers at their own pace (E5a–e, §9.6) | Cost flat in N; ≥ 10 fps with 1 active object on the M2 | ms/frame vs N; E0 score; cups identity | nothing new |
 | **E6** | **Event VLM.** Qwen3-VL-4B (mlx-vlm), given the tracker state as text vs given raw frames only | Tracker state turns wrong guesses into right ones on bag and hand events | accuracy on E0 events, seconds per event | ~4 GB download |
 | **E7** | **SAM 3 / 3.1 reference run** (cloud GPU or offline) | An upper bound to compare against: how far is EdgeTAM + our fixes from the strongest tracker? | same metrics | GPU access, gated checkpoints |
 | **E8** | **Edge bake-off.** Same pipeline and clips on Jetson (TensorRT) and/or Qualcomm (AI Hub EdgeTAM) | Meets the fps target for 1–4 objects | fps, identity metrics vs Mac | hardware access |
@@ -192,7 +192,7 @@ Each experiment is small (1–3 days), has one hypothesis, and is measured on th
 2. **E5, speed, now comes first.** E1 showed that nothing cheap replaces EdgeTAM frames during fast swaps of identical objects. About 15 fps of EdgeTAM is needed, and the M2 manages about 5 fps for one object.
 3. **E0:** real clips. Every remaining hypothesis was tested only on one hard clip or on drawings.
 4. **E4:** the identity check. It also unblocks memory gating (E2's variant C), which needs a way to confirm what it re-finds. The ambiguous cases left by E2b (both lookalikes handled at once) also need it.
-5. **Follow the hand on real video:** E2b worked on drawings; add a hand detector and test on E0 clips.
+5. ~~**Follow the hand on real video**~~: done (hand detector, E0 clips 99%). Next: **speed (E5)** and **"where is my wallet?" memory** (Phase 4).
 6. **E3, E6**, then **E7 and E8** for the edge move.
 
 ---
@@ -210,8 +210,8 @@ Each experiment is small (1–3 days), has one hypothesis, and is measured on th
 - It sends in-home video off-site.
 - It doesn't fix D1/D5: identity and permanence still need the tracker's state.
 
-**Hardware choice:** decide with the E8 bake-off, not up front.
-- **Qualcomm** (AI Hub EdgeTAM) has the best published numbers.
+**Hardware choice:** decide later, from what works on the Mac (the user's call, 2026-10-09). Known so far (§9.2): Jetson's TensorRT is the best-proven way to run this kind of tracker fast.
+- **Qualcomm** (AI Hub EdgeTAM) has the best published encoder numbers, but its memory attention runs on the CPU.
 - **Jetson** is the most flexible to develop on (PyTorch → TensorRT, same code).
 - **Hailo and Rockchip** fit only as detector accelerators.
 
@@ -221,6 +221,8 @@ Each experiment is small (1–3 days), has one hypothesis, and is measured on th
 
 - ~~**If E1 already fixes the cups swaps,** fast/slow tracking becomes the core architecture.~~ It didn't (§8.1), so DAM (E3) and raw speed (E5) stay on the plan.
 - **If E5 finds no path to ≥ 10 fps on the M2,** the Mac stays a development box, and we move to edge hardware earlier.
+- **If the window (E5a) loses accuracy,** try the published versions first (RS³-Prune, Efficient-SAM2); a short fine-tune with windows is the fallback.
+- **If many objects must move at once** (not a home), joint memory with ID slots (AOT / SAM 3.1 Multiplex style) becomes worth training.
 - **If a released efficient SAM 3 variant shows real edge numbers** (EfficientSAM3, or whatever follows SAM 3.1), re-evaluate the tracker choice. Its detector-based re-anchoring addresses D2 natively.
 
 ---
@@ -368,7 +370,327 @@ D puts **0 frames on the other wallet**.
 - The thresholds were set on drawn scenes, and the left/right hand labels were checked on one video.
 - **Not yet run on the real Mac camera.**
 
-## 9. Sources
+### 8.5 E0: the real-camera test + pocket (2026-10-09)
+
+**Setup:**
+- Six clips from the user's MacBook camera, replayed at 3 fps (the same frames every time), scored against labels.
+- **Score: 86% → 99% (615/624) after fixes; 0 frames on the other wallet.**
+- **The pocket feature** (clothes segmentation + hand path + "vanished at the clothes, then the hand moved away") takes the pocket clip from 60% to 100%.
+
+**What the real clips taught that drawings and other people's videos did not:**
+1. **Hands hold objects from below or the side.** The hand outline touched only 13–30% of the object, so "touching" needs a low threshold.
+2. **Held objects look 20–45% bigger and less similar (0.70–0.80).** The angle changes too, and the leather's details are too faint to estimate the turn.
+3. **A sheet of paper leaves a sliver visible**, and a shadow changes the colours of the visible part.
+4. **The face-based pose detector fails when the camera sees only torso and legs.** Per-pixel clothes segmentation works.
+5. **Long sessions need more tracker restarts.** That exposed a pruning bug in the streaming tracker.
+
+**Limits:**
+- One person, one room, one object type.
+- The rules were tuned on these clips.
+- Some labels are approximate (1-second resolution; one segment relabelled after the first run, documented in the script).
+
+---
+
+## 9. Speed for many objects (research + measurements, 2026-10-09)
+
+**The question:**
+- How do we track **many** objects (5–20 per camera) at **≥ 15 fps**?
+- It has to work on edge hardware that is weaker than the M2.
+- Nobody builds this system for one object, so cost must not grow with every object added.
+
+**Method:**
+- Four research passes ran in parallel: joint multi-object trackers, detect-and-match trackers, skipping repeated work, and edge runtimes.
+- I checked the claims that the plan rests on myself (✔).
+- I added one timing probe on our M2 (`experiments/e5_speed_probe.py`).
+
+### 9.1 Where our time goes (✔ measured on the M2)
+
+| Step | When it runs | ms |
+|---|---|---|
+| Image encoder (1024 px input) | once per frame, shared by all objects | **88** (768 px: 51; 512 px: 24) |
+| Hands (MediaPipe, CPU) | once per frame | 24 |
+| Clothes (pocket check) | only while an object is held | 120 |
+| Finder search | only when lost / at a hand-off | ~200 |
+| **Memory attention** | **every frame, per object** | **64** |
+| Memory encoder + mask decoder | every frame, per object | ~21 + ~15 |
+| Appearance check (DINOv2) | every frame, per object | ~19 |
+
+**Per object per frame: about 120 ms. Today: 88 + 120 × N ms per frame.**
+
+| Objects | Model time per frame | fps (model only) |
+|---|---|---|
+| 1 | ~210 ms | ~5 (live: 2.5) |
+| 5 | ~690 ms | ~1.5 |
+| 10 | ~1.3 s | < 1 |
+
+**What the probe found inside memory attention:**
+1. **It grows straight with the number of objects, even batched:** 1 object 64 ms, 2 objects 116, 4 objects 224, 8 objects 467.
+2. **The cost comes from the queries, not from the memory.** Every one of the 64×64 = 4,096 grid cells of the *whole* frame attends to all other cells and to the memory.
+   - Fewer memory frames barely helps: 7 → 4 frames is 64 → 54 ms.
+   - Attending only to a window around the object cuts it hard:
+
+     | Window (cells) | ms |
+     |---|---|
+     | 64×64 (whole frame) | 64 |
+     | 32×32 | 14.6 |
+     | **24×24** | **8.8** |
+     | 16×16 | 5.6 |
+
+   - **8 objects with 24×24 windows: 44 ms, against 467 ms.**
+   - EdgeTAM already compressed the memory side (512 tokens per memory frame), so the whole-frame query grid is what is left.
+   - **This is timing only.** Whether tracking stays accurate with a window is untested (§9.6, E5a).
+3. **Half precision is slower on the Mac GPU.** Memory attention: 69 vs 64 ms. Encoder: 119 vs 88 ms. Don't use it on MPS.
+
+### 9.2 What the field offers
+
+**A. Trackers that handle many objects in one pass.** Only two families do this.
+- **AOT / DeAOT** (NeurIPS 2021/2022, BSD-3):
+  - Each object gets an "ID" vector, and all objects are tracked together.
+  - The README says it handles up to 10 objects "as efficiently as processing a single object" ✔.
+  - DeAOT-T: 63.5 fps on a V100, DAVIS17 80.5 ◐. That accuracy is well below EdgeTAM's 87.7.
+- **SAM 3.1 Object Multiplex** (Meta, Mar 2026) ✔ (SAM 3 paper, Appendix H):
+  - Objects go into buckets of 16. Memory encoding, memory attention and mask decoding run **once per bucket**, and per-object embeddings keep identities apart.
+  - +7% time at 1 object; 5.2× faster than SAM 3 at 128 objects (H100).
+  - But it has 848M parameters, so it is not an edge model. It also needs training, so it can't be bolted onto EdgeTAM.
+
+**B. Everything else repeats the memory step per object.**
+- That covers SAM 2, EdgeTAM, EfficientTAM, Cutie, XMem and the SAM 2-based multi-object trackers (SAM2MOT, Det-SAM2).
+- The SAM 3 paper says this plainly about its own tracker: "compute and memory costs that grow linearly with the number of objects" ✔.
+- Cutie-small: 45.5 fps at 1 object, 29.9 fps at 5 (V100) ◐.
+- Cutie's own limitation section: it "often fails when highly similar objects move in close proximity" ◐.
+
+**C. Cheaper memory step, without retraining.**
+- **RS³-Prune** (BMVC 2026) ✔:
+  - "read-sparse": only queries near the object take part;
+  - "store-sparse": only the object's region enters memory;
+  - result: up to +38.8% fps, accuracy competitive.
+- **Efficient-SAM2** (ICLR 2026) ◐: 1.7–1.8× faster memory attention, −1.0 J&F, about 1 hour of training.
+- **EfficientTAM** pooling of the memory ◐: 2.2× on iPhone, −0.5 J&F.
+- Our probe suggests read-sparse gains much more on EdgeTAM (7×) than the published 1.4×. The published numbers are on SAM 2, where the memory side is still large.
+
+**D. Do heavy work only when something changes.**
+- **MARLIN** (SenSys 2019, mobile AR) ◐: runs the network only for new objects or big changes, with a cheap tracker in between. Up to 73% less energy than running the network on every frame.
+- **Reducto** (SIGCOMM 2020) ◐: cheap frame differences filter 51–97% of frames.
+- **HiM2SAM** ◐: runs its expensive step only on low-confidence frames. 3.7 ms on average against 166 ms on every frame.
+- **DeltaCNN** (CVPR 2022) ◐: recomputes only changed pixels, 3–7× with a static camera. CUDA-only kernels, so not for the Mac or NPUs.
+
+**E. Detect-and-match (a detector every frame, then link boxes over time).**
+- Speed:
+  - YOLO26n: 4–5 ms on Jetson Orin NX / Nano with TensorRT (◐ vendor numbers).
+  - OC-SORT linking: ~1 ms.
+  - Cost is almost flat in N.
+- **YOLOE** (ICCV 2025) ◐ can be prompted with a box on a reference photo. But it finds "a wallet", not "my wallet": still class-level.
+- What it gives up: masks; objects inside a hand (box merges with the hand); instance identity.
+- It is built on Ultralytics, which is **AGPL-3.0** ◐. Check before any product use.
+
+**F. Fast box trackers (one per object, searching a crop).**
+- LiteTrack: 102 fps on Orin NX ◐. AsymTrack: ~80 fps ◐.
+- Cost is still per object, and they have no way to re-find an object after a full occlusion. Not for us.
+
+**G. Edge runtimes.**
+
+| Platform | What we found | |
+|---|---|---|
+| **Jetson + TensorRT** | SAM 2.1 (TinyViT encoder) on Thor: 3.8 fps in PyTorch → **26.5 fps** with TensorRT FP16 (6.9×), masks ≥ 0.99 identical. Batching 2–4 objects was *slower* per object. | ✔ repo |
+| **Qualcomm AI Hub EdgeTAM** | Encoder 3–11 ms int8 on the NPU ◐, but **memory attention runs on the CPU** ("Memory attention always runs on CPU via sam2"). | ✔ code |
+| **Apple Core ML** | Community ports of the video path run on CPU + GPU because parts don't compile for the Neural Engine. int8 speedups need A17 Pro / M4; on the M2, quantisation mostly saves memory. | ◐ |
+| **Quantisation accuracy** | SAM2-tiny on DAVIS (CAR-SAM): 89.1 (full precision) → 87.6 (6-bit weights and activations) → 85.0 (4-bit). Small models hold up better. No published 8-bit video-tracking accuracy for EdgeTAM. | ◐ |
+
+**The memory step is the weak point on every edge platform:**
+- It is the part that grows per object.
+- No vendor runs it on an NPU today.
+
+### 9.3 What this means for us
+
+1. **The slope matters, not the runtime.** A faster runtime makes each object cheaper, but cost still grows with every object. We have to change what runs per object.
+2. **Most of the per-object work is spent far from the object.** The memory step processes all 4,096 cells of the frame for a wallet that covers maybe 5–10% of it.
+3. **Most objects are at rest most of the time.** Resting objects can skip work.
+   - ~~A person has two hands, so at most ~2 objects move at once.~~ **Wrong** (user, 2026-10-09). Several people can be in view and move many objects at once.
+   - So the cost of each *moving* object must also be small. Skipping resting objects alone is not enough.
+
+**Design rule:** do shared work once per frame. Do per-object work **only for objects that are active**, and **only around the object**.
+
+### 9.4 Proposed changes, ranked by gain for effort
+
+| # | Change | What it does | Expected gain | Risk |
+|---|---|---|---|---|
+| 1 | **Resting objects sleep** | An object with no hand near it and no pixel change inside its box runs no tracker and no check. It keeps its last mask, with a DINOv2 check every ~2 s. It wakes on a pixel change in its box (frame difference, < 1 ms), a hand within reach, or a failed check. | Per-object cost × **moving** objects instead of × all objects. An idle scene costs ~hands only. | A change we can't see. Mitigated: an arriving occluder is itself a pixel change. |
+| 2 | **Look only around the object** | Memory attention uses a fixed window (e.g. 24×24 cells, ~2–3× the object) centred on the last mask, with the cells' true positions. Fall back to the whole frame when the object is lost or searched for. | 64 → 9 ms per object (✔ timing). Fixed shapes also help TensorRT / Neural Engine / NPU compilers. | Accuracy untested. A fast throw may leave the window (→ whole frame on low score). |
+| 3 | **Cheaper image encoder** | 768 px input (51 ms) or 512 px (24 ms) instead of 1024 (88 ms). Skip the encoder entirely when every object sleeps. | 1.7–3.7× on the shared part | SAM 2 paper: −1.8 to −4.0 J&F at 512 px ◐. Small objects suffer. |
+| 4 | **Helpers at their own pace** | Hands in a parallel thread at 10–15 Hz. Appearance check every 3rd frame and on events. Clothes and finder only on events (already). | ~40 ms off each frame | Small |
+| 5 | **Window the rest of the per-object path** | Apply the same window to the memory encoder and mask decoder (RS³ "store-sparse"). After #2 these (~36 ms) are the largest per-object cost. | Est. 2–3× on that ~36 ms | Accuracy untested |
+| 6 | **Edge runtime** | Jetson + TensorRT FP16. Separate engines for encoder, windowed memory attention, decoder and memory encoder, at fixed shapes. | ~5–7× over PyTorch (Thor measurement) ◐ | Shapes must be fixed; we design for that in #2 |
+
+**Later, only if needed:**
+- **Joint memory for many *active* objects** (AOT / Multiplex-style ID slots inside EdgeTAM).
+  - Needs training on SA-V.
+  - Pays off only when many objects move at once (a warehouse, not a home).
+- **A small detector as the re-finder.** It would replace the 200 ms finder search when an object is lost, with our appearance and detail checks still deciding "is it mine". Check the licence first.
+
+**Not recommended:**
+- Box trackers per object (cost per object, can't re-find).
+- Detect-and-match as the main tracker (no masks, fails on held objects, class-level only).
+- DeltaCNN (CUDA-only).
+- Token merging (EdgeTAM's encoder is a CNN; DINOv2-S is already small).
+- Half precision on the Mac GPU (measured slower).
+
+### 9.5 Budget (model time per frame on the M2; k = active objects; N = all objects)
+
+| Setup | Formula (ms) | k = 1 | k = 2 | Depends on N? |
+|---|---|---|---|---|
+| Today | 88 + 120 × **N** | ~210 (N = 1) | — | **yes** |
+| + #1 sleep + #2 window | 88 + 64 × k | ~150 (6.6 fps) | ~215 | no |
+| + #3 768 px + #4 helpers | 51 + 51 × k | ~100 (**~10 fps**) | ~155 (~6.5 fps) | no |
+| + #5 window the rest (est.) | 51 + ~30 × k | ~80 (~12 fps) | ~110 (~9 fps) | no |
+
+**What the budget says:**
+- **The big win is not a number in this table: cost stops depending on N.** Ten resting objects cost about the same as one.
+- **The Mac (PyTorch) gets to about 10 fps.** That is enough to develop on, but below the 15 fps that identical objects need.
+- **The 15 fps target needs the TensorRT step (#6).** Its 5–7× is measured on SAM 2 on a different device (◐), so it has to be measured on a Jetson (E8).
+- **For the later hardware choice:** Qualcomm's memory step runs on the CPU, and Apple's doesn't compile for the Neural Engine in public ports. Jetson + TensorRT is the best-proven route. The user decides later.
+
+### 9.6 Experiment plan (replaces the old E5 line)
+
+| # | Test | Pass if | Data |
+|---|---|---|---|
+| **E5a** | Window memory attention (#2) in `StreamingTracker`, true cell positions, whole-frame fallback | E0 score ≥ 98% (now 99%); mask IoU vs whole-frame ≥ 0.9; cups identity at 15 fps no worse | E0 clips, drawn scenes, cups |
+| **E5b** | Sleeping objects (#1), with several registered objects | ms/frame flat as N grows 1 → 10; no missed pick-up | new clip with 3–5 objects + blocks replay |
+| **E5c** | Encoder input 1024 / 768 / 512 (#3) | E0 ≥ 98% at the chosen size | E0 clips, cups |
+| **E5d** | Helpers at their own pace (#4) + live multi-object view | ≥ 10 fps live with 1 active object, flat in N | live camera |
+| **E5e** | Window the memory encoder + decoder (#5) | same as E5a | same as E5a |
+| **E8** | Jetson + TensorRT, fixed shapes | ≥ 15 fps with 2 active + 10 resting | same clips on the device |
+
+**Order:** superseded by §9.8. The user's priority is one object faster first.
+
+### 9.7 How sure each part is
+
+- **✔ Checked here:**
+  - our timings (§9.1);
+  - Multiplex design and speed (SAM 3 paper App. H);
+  - the AOT README claim;
+  - Qualcomm's memory step on CPU (their code);
+  - the Thor TensorRT numbers and batching result (repo);
+  - the RS³-Prune abstract.
+- **◐ Reported, not checked:** all other fps and accuracy numbers above.
+  - Edge numbers come from different devices and are not directly comparable.
+  - The EfficientTAM paper contradicts itself on iPhone fps.
+  - EdgeDAM, a close match to our hybrid, was withdrawn, so it is not used.
+- **Estimates:** the budget rows after "today" and the TensorRT factor for our pipeline.
+
+### 9.8 One object, faster first (user's priorities, 2026-10-09)
+
+**The user's corrections:**
+1. **Goal (clarified 2026-10-11):** multiple objects eventually, but not necessarily all tracked at the same moment. First make **one object fast**. Then add objects one after another, or side by side, whichever works.
+2. Cost may grow per object, but it must stay modest. It must not explode.
+3. Edge hardware is **not decided**.
+4. Many objects can move at once (several people).
+
+**Full system, one object, measured** on the six E0 clips (665 frames, every part timed; `experiments/e5_time_breakdown.py` → `experiments/output/e5/time_breakdown.json`).
+
+| ms per frame | wallet visible (257 frames) | wallet in hand (330 frames) |
+|---|---|---|
+| Tracker (EdgeTAM), incl. 29 ms preparing the picture on the CPU | 253 | 289 |
+| Hands | 36 | 38 |
+| Appearance check ("is this outline still my wallet?") | 21 | 52 |
+| Explainer (blocked / turned / closer) | 69 | 9 |
+| Finder search ("where in the picture could it be?") | 15 (runs on 4% of frames) | **336** (every frame: scan 76 + outlines 260) |
+| Clothes (pocket) | 0 | 56 (runs on 27% of frames, ~200 ms each time) |
+| Rest of the logic | 10 | 33 |
+| **Total** | **404 ms → 2.5 fps** | **813 ms → 1.2 fps** |
+
+- The tracker alone, with nothing else running, takes 218 ms (4.6 fps).
+- In the full system it takes 253–289 ms, because the other models share the GPU and the tracker restarts while the wallet is held.
+
+**Fixes for one object, by gain (estimates until measured):**
+
+| Fix | Saves | Risk |
+|---|---|---|
+| Prepare the picture on the GPU, not in CPU float64 | ~25 ms | none |
+| Hands in parallel with the tracker (CPU vs GPU) | ~36 ms | none |
+| In hand: search every 3rd frame (flag exists), or a fast detector + appearance check instead of 10 outlines | ~220–300 ms in hand | put-down noticed up to 2 frames later |
+| Clothes at most once per second while the wallet is hidden in the hand | ~50 ms in hand | pocket noticed up to 1 s later |
+| Window memory attention (§9.1) | ~55 ms | accuracy untested (E5a) |
+| 768 px picture instead of 1024 | ~37 ms | small objects (E5c) |
+| Appearance check / explainer only when the look changes, or on a smaller crop | ~20–50 ms | small |
+| Core ML for the tracker (Apple's own route; EdgeTAM runs 16 fps on an iPhone 15 Pro Max with it ◐) | unknown, maybe 2–3× on the tracker | memory step may not run on the Neural Engine |
+
+**Expected result:**
+- With PyTorch on the Mac: visible 404 → ~200 ms (~5 fps), in hand 813 → ~300 ms (~3 fps).
+- Beyond that the tracker dominates. 15 fps needs a faster way to run it: Core ML on the Mac, or TensorRT on a Jetson.
+
+**New order:**
+1. The no-risk fixes: picture on the GPU, hands in parallel, search and clothes less often.
+2. E5a window, E5c picture size.
+3. Core ML test.
+4. Sleeping objects (E5b) when multiple objects come.
+
+**Results of steps 1–3** (2026-10-11; full system, one object, 665 frames of the E0 clips):
+
+| | Before | After |
+|---|---|---|
+| Wallet visible | 404 ms (2.5 fps) | **217–224 ms (4.5–4.6 fps)** |
+| Wallet in hand | 813 ms (1.2 fps) | **452–478 ms (2.1–2.2 fps)** |
+| All frames | 609 ms (1.6 fps) | **351–366 ms (2.7–2.85 fps)** |
+| Live replay of clip 2 (`compass.live`) | ~2.5 fps | **3.9 fps** |
+| E0 score | 615/624 | **616/624** (no frames on the other wallet; pocket clip 100%) |
+
+Ranges are two runs of the final code. Other apps were open, so timings vary ±15%. Step-by-step log: `PROGRESS.md`.
+
+**What each change did:**
+
+| Change | Effect | Accuracy |
+|---|---|---|
+| Picture resize with OpenCV instead of PIL, normalise on the GPU | prep 29 → 7 ms | 0.3 grey levels different. Cost 3 borderline E0 frames (wallet turned in hand, look-match right at the threshold) |
+| Hands in parallel with the tracker | ~30 ms hidden behind the tracker | none |
+| Search outlines reuse the tracker's image features (no second encoding; full-resolution outlines) | in-hand outlines 260 → ~130 ms | +2 frames (sharper outlines) |
+| Clothes result reused for up to 1 s | in hand 56 → ~12 ms | none (pocket clip 100%) |
+| Search candidates checked in one batch | appearance in hand 52 → ~40 ms | none |
+| **Skip while nothing changes** (`ObjectState.skip_when_still`) | skipped 26–31% of visible frames on E0; a skipped frame costs ~18 ms instead of ~300 | +3 frames |
+| **Window** (`compass/window.py`): memory step + mask decoder on a square around the last mask (box + half its size per side) | tracker 229 → 164 ms (memory step 62 → 22 ms) | tracker-only masks vs whole frame: mean IoU 0.989, 0.6% of frames < 0.8. E0 −1 frame |
+
+**Tried and dropped:**
+- **Tighter window** (quarter-box margin): IoU 0.984, and 7% of frames below 0.8 on the fast pocket move, for little extra speed.
+- **Outlining only search peaks near the hand:** a fixed 80 px margin lost a close-up wallet (clip 4, −9 frames). A size-based margin covered almost everything, so it saved nothing.
+
+**Why our window gain is smaller than the probe's 64 → 9 ms:** the wallet is big in these clips (~19 of 64 cells across), so its window is 36–48 cells. Close-ups use the whole frame. Small objects will gain more.
+
+**What is left** (in hand ~500 ms):
+
+| Part | ms |
+|---|---|
+| Tracker | ~200 (image encoder 88, memory encoder 23, memory step ~22, decoder ~15) |
+| Search outlines | ~130 (17 ms per candidate, 10 candidates) |
+| Search scan | ~65 |
+| Appearance check | ~40 |
+
+**Next:**
+- outline candidates in small windows, or the fast detector (§9.2 E);
+- 768 px input (E5c);
+- Core ML test.
+
+**Multi-object design: watch cheaply, track accurately on wake** (the user's idea, 2026-10-11; same as #1 + #2 in §9.4):
+
+| Object state | What runs | Cost |
+|---|---|---|
+| **Resting** | A pixel-change check inside its box (+ the shared hand detector), and an appearance check every ~2 s | ~1 ms for all resting objects together |
+| **Woken** (pixels in its box changed, or a hand came near) | The accurate tracker, only in a window around the object, until it rests again (still ~1 s and looks right) | ~120 ms per moving object today, ~40–50 target |
+| **Lost / carried away** | Finder search, later a fast detector + appearance check | event only |
+
+- **Example:** 10 objects, 2 moving.
+  - Tracking all of them today: 88 + 10 × 120 ≈ 1.3 s per frame.
+  - With waking: 88 + 2 × 120 ≈ 330 ms.
+  - With waking and windows: about 190 ms.
+- **A YOLO-type detector is not needed for "did something move in this box".** Comparing the box's pixels with the last frame does that almost for free. The detector's job is re-finding an object that left its box.
+- **Risks:**
+  - Camera moved or light changed: everything wakes, so fall back to round-robin.
+  - Two identical objects moving together: both must be tracked at full rate, so cost peaks exactly then.
+  - An object slid while covered: the cover arriving is itself a change, so the object wakes.
+- **Research using the same pattern:**
+  - MARLIN (SenSys 2019): heavy model only on change, up to 73% less energy ◐.
+  - Reducto (SIGCOMM 2020): 51–97% of frames skipped ◐.
+  - HiM2SAM: expensive step only when unsure ◐.
+
+## 10. Sources
 
 **Checked here (✔):**
 - VET-Bench, "Can Vision-Language Models Solve the Shell Game?" (Mar 2026): https://arxiv.org/abs/2603.08436
@@ -401,3 +723,22 @@ D puts **0 frames on the other wallet**.
 - TensorRT Edge-LLM benchmarks: https://nvidia.github.io/TensorRT-Edge-LLM/latest/user_guide/performance/performance-benchmarks.html
 - NVIDIA VSS: https://github.com/NVIDIA-AI-Blueprints/video-search-and-summarization
 - SAM 2 paper (resolution ablation): https://arxiv.org/pdf/2408.00714
+
+**Speed research, §9 (2026-10-09):**
+- ✔ SAM 3 paper, Appendix H "Object Multiplex": https://arxiv.org/html/2511.16719v2
+- ✔ SAM 3.1 release notes: https://github.com/facebookresearch/sam3/blob/main/RELEASE_SAM3p1.md
+- ✔ AOT / DeAOT (BSD-3): https://github.com/yoxu515/aot-benchmark · ◐ papers https://arxiv.org/abs/2106.02638, https://arxiv.org/abs/2210.09782
+- ✔ Qualcomm AI Hub EdgeTAM app (memory attention on CPU): https://github.com/quic/ai-hub-models/blob/main/src/qai_hub_models/models/edgetam/app.py
+- ✔ Efficient-SAM2-TensorRT (Jetson Thor): https://github.com/thedannyliu/Efficient-SAM2-TensorRT
+- ✔ RS³-Prune (BMVC 2026): https://arxiv.org/abs/2608.22526
+- ◐ Cutie: https://arxiv.org/abs/2310.12982 · XMem: https://github.com/hkchengrex/XMem
+- ◐ EfficientTAM: https://arxiv.org/abs/2411.18933 · Efficient-SAM2: https://arxiv.org/html/2602.08224
+- ◐ EfficientSAM3: https://github.com/SimonZeng7108/efficientsam3
+- ◐ LiAM-SAM (SAM 2 multi-object cost): https://arxiv.org/abs/2609.28078
+- ◐ MARLIN: https://par.nsf.gov/servlets/purl/10201676 · Reducto: https://www.cs.princeton.edu/~ravian/publications/reducto_sigcomm20.pdf
+- ◐ HiM2SAM: https://arxiv.org/html/2507.07603v1 · DeltaCNN: https://arxiv.org/abs/2203.03996
+- ◐ YOLOE: https://arxiv.org/abs/2503.07465 · Ultralytics Jetson numbers: https://docs.ultralytics.com/guides/nvidia-jetson/ · OC-SORT: https://arxiv.org/abs/2203.14360
+- ◐ LiteTrack: https://arxiv.org/abs/2309.09249 · AsymTrack: https://arxiv.org/abs/2503.00516
+- ◐ Core ML quantisation: https://apple.github.io/coremltools/docs-guides/source/opt-quantization-perf.html
+- ◐ CAR-SAM (quantised SAM 2): https://www.alphaxiv.org/abs/2605.16901 · Q-SAM2: https://arxiv.org/abs/2506.09782
+- ◐ SAM 2 resolution / memory ablations: https://arxiv.org/abs/2408.00714

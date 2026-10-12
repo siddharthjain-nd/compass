@@ -59,7 +59,20 @@ class Explanation:
 
 
 def _dilate(mask, r):
+    if r > 100:  # big squares: a chessboard distance map gives exactly the same result in one pass (~4 ms at any size;
+        # cv2.dilate is faster up to ~100 px, 16 ms at 300 px; a 600 px square took most of the explainer's mask time)
+        return cv2.distanceTransform((~mask.astype(bool)).astype(np.uint8), cv2.DIST_C, 3) <= r
     return cv2.dilate(mask.astype(np.uint8), np.ones((2 * r + 1, 2 * r + 1), np.uint8)) > 0
+
+
+def _crop_box(mask, margin, hw):
+    """(y0, y1, x0, x1): the mask's bounding box plus `margin`, inside the frame."""
+    ys, xs = np.nonzero(mask)
+    h, w = hw
+    if len(ys) == 0:
+        return 0, h, 0, w
+    return (max(int(ys.min()) - margin, 0), min(int(ys.max()) + margin + 1, h),
+            max(int(xs.min()) - margin, 0), min(int(xs.max()) + margin + 1, w))
 
 
 class Explainer:
@@ -103,6 +116,7 @@ class Explainer:
         """Similarity transform (2x3) from the remembered view to this frame, and how many details agree."""
         if self.des is None or len(self.kp) < 6:
             return None, 0
+        # (whole frame on purpose: ORB on a crop finds slightly different details, its image pyramid samples differently)
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         kp2, des2 = self.orb.detectAndCompute(gray, search.astype(np.uint8) * 255)
         if des2 is None or len(kp2) < 6:
@@ -137,7 +151,11 @@ class Explainer:
         same = np.linalg.norm(px - before, axis=-1) < SAME_COLOUR
         background = np.zeros(len(px), bool)
         if len(self.background) and len(px):
-            nearest = np.min(np.linalg.norm(px[:, None, :] - self.background[None, :, :], axis=-1), axis=1)
+            # distance to the nearest remembered background colour, as one matrix product (|a-b|^2 = a^2 + b^2 - 2ab;
+            # the 2000 x 1500 x 3 difference array it replaces took ~30 ms)
+            bg = self.background
+            d2 = (px * px).sum(1)[:, None] + (bg * bg).sum(1)[None, :] - 2.0 * (px @ bg.T)
+            nearest = np.sqrt(np.maximum(d2.min(axis=1), 0.0))
             background = ~same & (nearest < BACKGROUND_COLOUR)
         rest_share = 1.0 - hand_share
         k = max(len(px), 1)
@@ -156,43 +174,59 @@ class Explainer:
         angle = scale = None
         if M is not None:
             expected = cv2.warpAffine(self.mask.astype(np.uint8), M, (w, h), flags=cv2.INTER_NEAREST) > 0
-            old_look = cv2.warpAffine(self.img, M, (w, h), borderMode=cv2.BORDER_REPLICATE)
+            warp = M
             scale = float(math.hypot(M[0, 0], M[1, 0]))
             angle = float(-math.degrees(math.atan2(M[1, 0], M[0, 0])))
         elif raw.any() and (raw & self.mask).sum() >= 0.7 * raw.sum():
             # too few details to trust a motion estimate, and the visible part sits where the object was:
             # assume it stayed put (a half-hidden or flipped object)
-            expected, old_look = self.mask, self.img
+            expected, warp = self.mask, None
         elif raw.any() and (raw & _dilate(self.mask, int(self.size * 0.5))).any():
             # too few details: assume the outline moved with the tracker's mask
             (ys, xs), (ys0, xs0) = np.nonzero(raw), np.nonzero(self.mask)
             shift = np.float32([[1, 0, xs.mean() - xs0.mean()], [0, 1, ys.mean() - ys0.mean()]])
             expected = cv2.warpAffine(self.mask.astype(np.uint8), shift, (w, h), flags=cv2.INTER_NEAREST) > 0
-            old_look = cv2.warpAffine(self.img, shift, (w, h), borderMode=cv2.BORDER_REPLICATE)
+            warp = shift
         else:
-            expected, old_look = self.mask, self.img
+            expected, warp = self.mask, None
+        # the rest only looks within ~35 px of the old outline, the mask and where the object should be: work on a
+        # crop around them (whole-frame colour conversions, blurs and dilations made this ~100 ms per call)
+        cy0, cy1, cx0, cx1 = _crop_box(self.mask | raw | expected, 40, (h, w))
+        crop = (slice(cy0, cy1), slice(cx0, cx1))
+        if warp is not None:  # the remembered picture, moved like the object, straight into the crop
+            warp = warp.astype(np.float64)
+            warp[0, 2] -= cx0
+            warp[1, 2] -= cy0
+            old_look = cv2.warpAffine(self.img, warp, (cx1 - cx0, cy1 - cy0), borderMode=cv2.BORDER_REPLICATE)
+        else:
+            old_look = self.img[crop]
+        full_expected = expected
+        img, raw, expected, hand_mask, ref_img, ref_mask = (img[crop], raw[crop], expected[crop], hand_mask[crop],
+                                                            self.img[crop], self.mask[crop])
         area = max(int(expected.sum()), 1)
         coverage = (raw & expected).sum() / area
         iou = (raw & expected).sum() / max((raw | expected).sum(), 1)
         missing = expected & ~_dilate(raw, 3)
         content = self._missing_content(img, old_look, missing, hand_mask)
-        lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB).astype(np.float32)
         hand_share, new_share = content.get("hand", 0.0), content.get("new", 0.0)
         blocker = "hand" if hand_share >= 0.3 else "something"
         visible = raw & expected
-        old = cv2.cvtColor(old_look, cv2.COLOR_BGR2LAB).astype(np.float32)
-        visible_match = float((np.linalg.norm(lab - old, axis=-1)[visible] < 22).mean()) if visible.sum() > 20 else 0.0
+        visible_match = 0.0
+        if visible.sum() > 20:
+            lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB).astype(np.float32)[visible]
+            old = cv2.cvtColor(old_look, cv2.COLOR_BGR2LAB).astype(np.float32)[visible]
+            visible_match = float((np.linalg.norm(lab - old, axis=-1) < 22).mean())
         # has anything changed just outside the missing part since the reference view? (the camera is still, so
         # compare the same pixels; outlines of the object then and now are left out)
-        around = _dilate(missing, 25) & ~_dilate(expected | raw | self.mask, 6) & ~hand_mask
+        around = _dilate(missing, 25) & ~_dilate(expected | raw | ref_mask, 6) & ~hand_mask
         ring_changed = 0.0
         if around.sum() > 30:  # smoothed first, so pixel noise doesn't count as change
             now = cv2.cvtColor(cv2.GaussianBlur(img, (7, 7), 0), cv2.COLOR_BGR2LAB).astype(np.float32)
-            ref = cv2.cvtColor(cv2.GaussianBlur(self.img, (7, 7), 0), cv2.COLOR_BGR2LAB).astype(np.float32)
+            ref = cv2.cvtColor(cv2.GaussianBlur(ref_img, (7, 7), 0), cv2.COLOR_BGR2LAB).astype(np.float32)
             ring_changed = float((np.linalg.norm(now[around] - ref[around], axis=-1) > SAME_COLOUR).mean())
         content["around_changed"] = ring_changed
         blocker_seen = hand_share >= 0.3 or ring_changed >= 0.15 or new_share >= 0.4
-        ex = Explanation("unsure", float(coverage), angle, scale, None, n, content, expected)
+        ex = Explanation("unsure", float(coverage), angle, scale, None, n, content, full_expected)
         # a scale estimate must agree with how much the mask's area changed (area ~ scale^2); a few matched
         # details on a mask that spread onto something else can otherwise look like "farther"
         area_ratio = raw.sum() / max(int(self.mask.sum()), 1)

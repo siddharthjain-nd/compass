@@ -1,0 +1,184 @@
+{
+ "step": "e0-pocket-baseline",
+ "date": "2026-10-09",
+ "note": "E0 + pocket done; one object; before any speed work (PIL resize, hands in sequence, search re-encodes the frame, clothes every time, tracker every frame on the whole frame)",
+ "e0": {
+  "correct": 615,
+  "scored": 624,
+  "percent": 98.6,
+  "other_wallet_frames": 0,
+  "clips": {
+   "20261009-001949": {
+    "correct": 120,
+    "scored": 126,
+    "other_wallet": 0,
+    "by_truth": {
+     "visible": "8/8",
+     "visible_or_hand": "112/118"
+    }
+   },
+   "20261009-002032": {
+    "correct": 118,
+    "scored": 118,
+    "other_wallet": 0,
+    "by_truth": {
+     "visible": "18/18",
+     "visible_or_hand": "100/100"
+    }
+   },
+   "20261009-002110": {
+    "correct": 58,
+    "scored": 59,
+    "other_wallet": 0,
+    "by_truth": {
+     "visible": "23/23",
+     "covered": "26/26",
+     "partly": "9/10"
+    }
+   },
+   "20261009-002136": {
+    "correct": 179,
+    "scored": 181,
+    "other_wallet": 0,
+    "by_truth": {
+     "visible": "16/17",
+     "visible_or_hand": "163/164"
+    }
+   },
+   "20261009-002327": {
+    "correct": 72,
+    "scored": 72,
+    "other_wallet": 0,
+    "by_truth": {
+     "visible": "8/8",
+     "visible_or_hand": "21/21",
+     "into_pocket": "26/26",
+     "pocket": "17/17"
+    }
+   },
+   "20261009-002445": {
+    "correct": 68,
+    "scored": 68,
+    "other_wallet": 0,
+    "by_truth": {
+     "visible": "17/17",
+     "visible_or_hand": "51/51"
+    }
+   }
+  }
+ },
+ "timing": {
+  "all": {
+   "frames": 665,
+   "total_ms": 608.8,
+   "fps": 1.64,
+   "median_total_ms": 580.1,
+   "parts_ms": {
+    "tracker": 272.7,
+    "appearance": 35.2,
+    "hands": 36.3,
+    "explainer": 37.7,
+    "finder scan": 41.1,
+    "finder outlines": 136.7,
+    "clothes": 28.1,
+    "other": 20.9
+   }
+  },
+  "state: covered": {
+   "frames": 31,
+   "total_ms": 462.1,
+   "fps": 2.16,
+   "median_total_ms": 423.2,
+   "parts_ms": {
+    "tracker": 218.2,
+    "appearance": 9.4,
+    "hands": 23.5,
+    "explainer": 118.4,
+    "finder scan": 38.1,
+    "finder outlines": 48.3,
+    "clothes": 0.0,
+    "other": 6.2
+   }
+  },
+  "state: in hand": {
+   "frames": 330,
+   "total_ms": 813.0,
+   "fps": 1.23,
+   "median_total_ms": 773.9,
+   "parts_ms": {
+    "tracker": 288.6,
+    "appearance": 52.4,
+    "hands": 37.9,
+    "explainer": 8.8,
+    "finder scan": 76.4,
+    "finder outlines": 259.6,
+    "clothes": 56.3,
+    "other": 33.0
+   }
+  },
+  "state: in pocket": {
+   "frames": 39,
+   "total_ms": 380.3,
+   "fps": 2.63,
+   "median_total_ms": 365.3,
+   "parts_ms": {
+    "tracker": 321.4,
+    "appearance": 7.0,
+    "hands": 38.3,
+    "explainer": 0.0,
+    "finder scan": 2.2,
+    "finder outlines": 5.5,
+    "clothes": 3.9,
+    "other": 2.0
+   }
+  },
+  "state: unknown": {
+   "frames": 1,
+   "total_ms": 839.3,
+   "fps": 1.19,
+   "median_total_ms": 839.3,
+   "parts_ms": {
+    "tracker": 311.0,
+    "appearance": 43.1,
+    "hands": 24.4,
+    "explainer": 0.0,
+    "finder scan": 87.1,
+    "finder outlines": 348.3,
+    "clothes": 0.0,
+    "other": 25.4
+   }
+  },
+  "state: unsure": {
+   "frames": 7,
+   "total_ms": 386.4,
+   "fps": 2.59,
+   "median_total_ms": 402.2,
+   "parts_ms": {
+    "tracker": 220.6,
+    "appearance": 14.9,
+    "hands": 31.7,
+    "explainer": 110.3,
+    "finder scan": 0.0,
+    "finder outlines": 0.0,
+    "clothes": 0.0,
+    "other": 8.9
+   }
+  },
+  "state: visible": {
+   "frames": 257,
+   "total_ms": 404.1,
+   "fps": 2.47,
+   "median_total_ms": 351.7,
+   "parts_ms": {
+    "tracker": 252.8,
+    "appearance": 20.9,
+    "hands": 35.8,
+    "explainer": 69.0,
+    "finder scan": 2.9,
+    "finder outlines": 12.3,
+    "clothes": 0.0,
+    "other": 10.3
+   }
+  }
+ }
+}

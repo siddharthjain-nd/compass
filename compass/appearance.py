@@ -57,6 +57,10 @@ class Appearance:
     def embed(self, img_bgr, mask):
         return self._embed_crops([self._crop(img_bgr, mask)])[0]
 
+    def embed_masks(self, img_bgr, masks):
+        """Embeddings of several masked crops of one frame, in one batch."""
+        return self._embed_crops([self._crop(img_bgr, m) for m in masks])
+
     def embed_boxes(self, img_bgr, boxes):
         """Embeddings of plain box crops (no mask), in one batch: used to check whether a spot looks like the object."""
         crops = [cv2.cvtColor(cv2.resize(img_bgr[y0:y1, x0:x1], (224, 224)), cv2.COLOR_BGR2RGB)
@@ -96,6 +100,12 @@ class Gate:
         e = self.app.embed(img, mask)
         return float((self._bank() @ e).max()), e
 
+    def similarities(self, img, masks):
+        """Best match against all known looks for several masks of one frame, in one batch."""
+        if not masks:
+            return []
+        return [float(s) for s in (self.app.embed_masks(img, masks) @ self._bank().T).max(dim=1).values]
+
     def check(self, img, mask):
         """Returns (show, remember, info)."""
         area = int(mask.sum())
@@ -125,10 +135,11 @@ class Gate:
         if sim < NEW_VIEW:
             self.learned.append(e)
 
-    def confirm(self, img, mask):
-        """Stateless version for candidates: object-sized and looks like the object (partial views allowed)."""
+    def confirm(self, img, mask, sim=None):
+        """Stateless version for candidates: object-sized and looks like the object (partial views allowed).
+        `sim`: the similarity if already computed."""
         area = int(mask.sum())
         typical_area = float(np.median(self.areas))
         if not 0.25 * typical_area <= area <= AREA_GROWTH * typical_area:
             return False
-        return self.similarity(img, mask)[0] >= SIM_PARTIAL
+        return (self.similarity(img, mask)[0] if sim is None else sim) >= SIM_PARTIAL

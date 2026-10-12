@@ -82,7 +82,7 @@ def draw(frame, step, status, hint, event, recording, mirror=False):
     h, w = vis.shape[:2]
     cv2.rectangle(vis, (0, 0), (w, 64), PANEL, -1)
     headline = as_seen_by_user(step.describe(), mirror) if step is not None else "Not tracking yet"
-    color = {"visible": BLUE, "held": YELLOW}.get(step.state if step else "", INK)
+    color = {"visible": BLUE, "held": YELLOW, "in_pocket": YELLOW}.get(step.state if step else "", INK)
     size = 0.8 if w >= 1000 else max(0.45, 0.8 * w / 1000)  # narrow pictures: smaller text, so it fits
     while cv2.getTextSize(headline, FONT, size, 2)[0][0] > w - 28 and size > 0.35:
         size -= 0.05
@@ -105,6 +105,11 @@ def main():
     ap.add_argument("--finder-every", type=int, default=1,
                     help="while the object is in a hand, look for the hand-off every N processed frames (default 1)")
     ap.add_argument("--no-hands", action="store_true", help="don't run the hand detector (MediaPipe)")
+    ap.add_argument("--no-pocket", action="store_true", help="don't run pocket detection (clothes segmenter)")
+    ap.add_argument("--no-window", action="store_true",
+                    help="track on the whole frame instead of only around the object (slower; for comparison)")
+    ap.add_argument("--no-skip", action="store_true",
+                    help="run the tracker on every frame, even while the object rests and nothing changes")
     ap.add_argument("--mirror", action=argparse.BooleanOptionalAction, default=None,
                     help="mirror the picture like a selfie view, with left/right from your side "
                          "(default: on for the camera, off for a video file)")
@@ -130,13 +135,18 @@ def main():
     from compass.tracker import StreamingTracker
 
     dev = device()
-    hands = None
+    hands = clothes = None
     if not args.no_hands:
         from compass.hands import HandDetector
 
         hands = HandDetector()
-    obj = ObjectState(StreamingTracker(video_predictor(dev)), Appearance(dev), Finder(dev), Segmenter(dev),
-                      finder_every=args.finder_every, hands=hands)
+        if not args.no_pocket:  # pockets are found from the hand that holds the object, so they need hands
+            from compass.body import ClothesSegmenter
+
+            clothes = ClothesSegmenter()
+    obj = ObjectState(StreamingTracker(video_predictor(dev), window=not args.no_window), Appearance(dev), Finder(dev),
+                      Segmenter(dev), skip_when_still=not args.no_skip,
+                      finder_every=args.finder_every, hands=hands, clothes=clothes)
     mirror = args.mirror if args.mirror is not None else not args.video
     src = VideoSource(args.video) if args.video else CameraSource(args.camera)
     print(f"source: {'video ' + args.video if args.video else 'camera ' + str(args.camera)} at {src.fps:.0f} fps", flush=True)

@@ -1,0 +1,213 @@
+{
+ "step": "r2a-pocket-rule-fixes",
+ "date": "2026-10-12",
+ "note": "pocket entry: the holding hand vanished at the clothes with the object (tracker < 25% of it, not at the picture edge); pocket exit: full-size outline away from the pocket at the partial-view look level (0.75). Search pre-check off. Timing: paired run 1/2 (pre-check off).",
+ "e0": {
+  "correct": 794,
+  "scored": 807,
+  "percent": 98.4,
+  "other_wallet_frames": 0,
+  "clips": {
+   "20261009-001949": {
+    "correct": 122,
+    "scored": 126,
+    "other_wallet": 0,
+    "by_truth": {
+     "visible": "8/8",
+     "visible_or_hand": "114/118"
+    }
+   },
+   "20261009-002032": {
+    "correct": 118,
+    "scored": 118,
+    "other_wallet": 0,
+    "by_truth": {
+     "visible": "18/18",
+     "visible_or_hand": "100/100"
+    }
+   },
+   "20261009-002110": {
+    "correct": 58,
+    "scored": 59,
+    "other_wallet": 0,
+    "by_truth": {
+     "visible": "23/23",
+     "covered": "26/26",
+     "partly": "9/10"
+    }
+   },
+   "20261009-002136": {
+    "correct": 178,
+    "scored": 181,
+    "other_wallet": 0,
+    "by_truth": {
+     "visible": "16/17",
+     "visible_or_hand": "162/164"
+    }
+   },
+   "20261009-002327": {
+    "correct": 72,
+    "scored": 72,
+    "other_wallet": 0,
+    "by_truth": {
+     "visible": "8/8",
+     "visible_or_hand": "21/21",
+     "into_pocket": "26/26",
+     "pocket": "17/17"
+    }
+   },
+   "20261009-002445": {
+    "correct": 68,
+    "scored": 68,
+    "other_wallet": 0,
+    "by_truth": {
+     "visible": "17/17",
+     "visible_or_hand": "51/51"
+    }
+   },
+   "20261012-113549": {
+    "correct": 114,
+    "scored": 119,
+    "other_wallet": 0,
+    "by_truth": {
+     "visible": "23/23",
+     "visible_or_hand": "43/48",
+     "into_pocket": "4/4",
+     "pocket": "39/39",
+     "out_of_pocket": "5/5"
+    }
+   },
+   "20261012-113643": {
+    "correct": 64,
+    "scored": 64,
+    "other_wallet": 0,
+    "by_truth": {
+     "visible": "19/19",
+     "partly": "6/6",
+     "covered": "39/39"
+    }
+   }
+  }
+ },
+ "timing": {
+  "all": {
+   "frames": 858,
+   "total_ms": 451.9,
+   "fps": 2.21,
+   "median_total_ms": 424.2,
+   "parts_ms": {
+    "tracker": 214.9,
+    "appearance": 34.6,
+    "hands": 38.2,
+    "explainer": 42.3,
+    "finder scan": 39.3,
+    "finder outlines": 81.0,
+    "clothes": 6.1,
+    "other": 33.6
+   },
+   "share_skipped": 0.16
+  },
+  "state: covered": {
+   "frames": 72,
+   "total_ms": 262.6,
+   "fps": 3.81,
+   "median_total_ms": 315.4,
+   "parts_ms": {
+    "tracker": 130.4,
+    "appearance": 3.7,
+    "hands": 34.3,
+    "explainer": 110.7,
+    "finder scan": 1.1,
+    "finder outlines": 0.0,
+    "clothes": 0.0,
+    "other": 16.7
+   },
+   "share_skipped": 0.28
+  },
+  "state: in hand": {
+   "frames": 363,
+   "total_ms": 681.1,
+   "fps": 1.47,
+   "median_total_ms": 628.6,
+   "parts_ms": {
+    "tracker": 275.6,
+    "appearance": 61.3,
+    "hands": 42.7,
+    "explainer": 11.4,
+    "finder scan": 89.6,
+    "finder outlines": 183.8,
+    "clothes": 14.5,
+    "other": 44.8
+   },
+   "share_skipped": 0.0
+  },
+  "state: in pocket": {
+   "frames": 92,
+   "total_ms": 178.1,
+   "fps": 5.61,
+   "median_total_ms": 231.8,
+   "parts_ms": {
+    "tracker": 137.7,
+    "appearance": 4.2,
+    "hands": 29.9,
+    "explainer": 0.0,
+    "finder scan": 1.9,
+    "finder outlines": 1.0,
+    "clothes": 0.0,
+    "other": 33.3
+   },
+   "share_skipped": 0.4
+  },
+  "state: unknown": {
+   "frames": 1,
+   "total_ms": 588.6,
+   "fps": 1.7,
+   "median_total_ms": 588.6,
+   "parts_ms": {
+    "tracker": 192.4,
+    "appearance": 42.9,
+    "hands": 22.4,
+    "explainer": 0.0,
+    "finder scan": 78.4,
+    "finder outlines": 230.5,
+    "clothes": 0.0,
+    "other": 44.3
+   },
+   "share_skipped": 0.0
+  },
+  "state: unsure": {
+   "frames": 6,
+   "total_ms": 405.1,
+   "fps": 2.47,
+   "median_total_ms": 378.7,
+   "parts_ms": {
+    "tracker": 221.3,
+    "appearance": 21.5,
+    "hands": 31.2,
+    "explainer": 144.5,
+    "finder scan": 0.0,
+    "finder outlines": 0.0,
+    "clothes": 0.0,
+    "other": 17.8
+   },
+   "share_skipped": 0.0
+  },
+  "state: visible": {
+   "frames": 324,
+   "total_ms": 315.4,
+   "fps": 3.17,
+   "median_total_ms": 311.0,
+   "parts_ms": {
+    "tracker": 187.6,
+    "appearance": 20.5,
+    "hands": 36.5,
+    "explainer": 71.8,
+    "finder scan": 2.7,
+    "finder outlines": 7.5,
+    "clothes": 0.0,
+    "other": 25.3
+   },
+   "share_skipped": 0.24
+  }
+ }
+}
