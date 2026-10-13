@@ -1,0 +1,92 @@
+{
+ "step": "r4-search-accuracy",
+ "date": "2026-10-13",
+ "note": "round 4: in-hand search outlines spots one at a time (skipping duplicates; same masks) + cheap spot tests before outlining (on a hand / far from the hand's path / on a known lookalike / unchanged since the take except where the hand took it). E2b 334/336, 8/8.",
+ "e0": {
+  "correct": 796,
+  "scored": 807,
+  "percent": 98.6,
+  "other_wallet_frames": 0,
+  "clips": {
+   "20261009-001949": {
+    "correct": 121,
+    "scored": 126,
+    "other_wallet": 0,
+    "by_truth": {
+     "visible": "8/8",
+     "visible_or_hand": "113/118"
+    }
+   },
+   "20261009-002032": {
+    "correct": 118,
+    "scored": 118,
+    "other_wallet": 0,
+    "by_truth": {
+     "visible": "18/18",
+     "visible_or_hand": "100/100"
+    }
+   },
+   "20261009-002110": {
+    "correct": 58,
+    "scored": 59,
+    "other_wallet": 0,
+    "by_truth": {
+     "visible": "23/23",
+     "covered": "26/26",
+     "partly": "9/10"
+    }
+   },
+   "20261009-002136": {
+    "correct": 179,
+    "scored": 181,
+    "other_wallet": 0,
+    "by_truth": {
+     "visible": "16/17",
+     "visible_or_hand": "163/164"
+    }
+   },
+   "20261009-002327": {
+    "correct": 72,
+    "scored": 72,
+    "other_wallet": 0,
+    "by_truth": {
+     "visible": "8/8",
+     "visible_or_hand": "21/21",
+     "into_pocket": "26/26",
+     "pocket": "17/17"
+    }
+   },
+   "20261009-002445": {
+    "correct": 68,
+    "scored": 68,
+    "other_wallet": 0,
+    "by_truth": {
+     "visible": "17/17",
+     "visible_or_hand": "51/51"
+    }
+   },
+   "20261012-113549": {
+    "correct": 116,
+    "scored": 119,
+    "other_wallet": 0,
+    "by_truth": {
+     "visible": "23/23",
+     "visible_or_hand": "45/48",
+     "into_pocket": "4/4",
+     "pocket": "39/39",
+     "out_of_pocket": "5/5"
+    }
+   },
+   "20261012-113643": {
+    "correct": 64,
+    "scored": 64,
+    "other_wallet": 0,
+    "by_truth": {
+     "visible": "19/19",
+     "partly": "6/6",
+     "covered": "39/39"
+    }
+   }
+  }
+ }
+}

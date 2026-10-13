@@ -12,12 +12,23 @@ One entry per step: what we tried, why, the numbers, and what we decided. Newest
 
 ---
 
-## Where we are now (2026-10-13, after speed round 3)
+## Where we are now (2026-10-13, after speed round 4)
 
-One registered object, MacBook M2. Tracker image step on the Neural Engine (Core ML), the rest on the GPU (PyTorch). Timings are from quiet-Mac runs (round 3: the quietest paired run).
+One registered object, MacBook M2. Tracker image step on the Neural Engine (Core ML), the rest on the GPU (PyTorch). Timings are from paired runs (Mac idle or in normal use).
 
-| | Start (2026-10-09) | Round 1 | Round 2 | **Round 3 (default, 1024 px)** | Round 3, 768 px option |
+| | Start (2026-10-09) | Round 1 | Round 2 | Round 3 | **Round 4** |
 |---|---|---|---|---|---|
+| Wallet visible | 404 ms (2.5 fps) | 217 ms | 191–211 ms | 131–161 ms | **130–136 ms (≈7.5 fps)** |
+| Wallet in hand | 813 ms (1.2 fps) | 452–460 ms | 452 ms | 349–445 ms | **299 ms (3.3 fps)** |
+| Covered | 462 ms | 475 ms | 145–169 ms | 94–122 ms | **≈100 ms (10 fps)** |
+| In pocket | 380 ms | 188 ms | 133 ms | 93–109 ms | **≈95 ms (10.5 fps)** |
+| All frames (8 clips) | — | — | 292 ms | 226–284 ms | **205 ms (4.9 fps)** |
+| Score, all 8 clips | — | — | 794/807 | 796/807 | **796/807 (98.6%)** |
+| Other-wallet frames | 0 | 0 | 0 | 0 | 0 |
+
+(768 px speed option: visible 9.3 fps, in hand 3.5 fps in round 3, before round 4's search savings; E0 782/807.)
+
+---|---|---|---|---|---|
 | Wallet visible | 404 ms (2.5 fps) | 217 ms | 191–211 ms | **131–161 ms (6–7.6 fps)** | 108 ms (9.3 fps) |
 | Wallet in hand | 813 ms (1.2 fps) | 452–460 ms | 452 ms | **352–445 ms (2.2–2.8 fps)** | 289 ms (3.5 fps) |
 | Covered | 462 ms | 475 ms | 145–169 ms | **94–122 ms (8–10.6 fps)** | 77 ms (13 fps) |
@@ -534,6 +545,65 @@ Worth retrying on NVIDIA (TensorRT / inductor there is mature).
 - **Speed option (768 px):** visible 9.3 fps, in hand 3.5 fps, E0 782/807.
 - **Dropped:** torch.compile (slower on the Mac). Scan model on Core ML: tried, not wired in (−22 ms).
 - **Timing noise:** the same code measured visible 131–161 ms on two quiet runs a few hours apart. Paired back-to-back runs remain the only fair comparison.
+
+## Speed round 4 (2026-10-13): the in-hand search
+
+**Goal:** "in hand" was the slowest state. On every held frame the search scanned the picture, outlined ~8 candidate spots and checked each, ~150–200 ms.
+
+### Step 4.0 · Measure first (`experiments/r4_search_usage.py`, `experiments/r4_spot_filters.py`)
+- The search ran on 384 of 397 held frames and found something on only **11** (7 put back "at its last spot", 4 put down elsewhere).
+- **3046 spots were outlined, 11 of them useful.**
+  - **1281 were duplicates:** another peak on the same object, outlined and then dropped.
+  - The rest were rejected after outlining: "does not look like the object" 197, "already lying there before the hand took it" 93, known lookalike 80, not near the hand 76.
+- **Cheap tests on a spot, before outlining it** (none dropped any of the 11 useful spots):
+
+  | Test | Outlines saved |
+  |---|---|
+  | Unchanged since the take | 1053 |
+  | On a hand | 412 |
+  | Far from the hand's path | 211 |
+  | On a known lookalike | 20 |
+  | **All four together** | **1481 (49%)** |
+
+### Step 4.1 · Outline one spot at a time, skip spots inside earlier outlines: **kept** (exact)
+- **Check:** old vs new on 147 frames gave **identical masks**. The search (scan + outlines) took 190 → 73 ms in that test.
+
+### Step 4.2 · Cheap spot tests while the object is held: **kept**
+- **Tests:** on a hand / more than one object size from the hand's path / within 25 px of a known lookalike / looks as it did when the hand took the object.
+- **Iteration 1:** E0 796/807 unchanged, but drawn scenes 334 → 332. Two put-downs were noticed one picture late.
+- **Cause:** the reference picture is from the moment of the take, so the hand and the object were there. Put down near the take spot, the area can look "unchanged".
+- **Fix:** no "unchanged" test inside the take area (hand + last outline + 25 px).
+  - A first narrower fix (last outline only) recovered one of the two frames.
+  - The take-area version recovered both.
+- **Result:** E0 **796/807** (as round 3), drawn scenes **334/336, 8/8**, 0 other-wallet frames.
+
+### Round 4 · Paired timing (2026-10-13 15:16–15:24, Mac in normal use)
+- **Conditions:** reference 107 ms before, 125 ms after, so the round-4 run was slightly busier.
+
+| State | Round 3 | **Round 4** |
+|---|---|---|
+| In hand | 349 ms (2.9 fps) | **299 ms (3.3 fps), −14%** |
+| Search outlines in hand | 97 ms (~8 spots, one batch) | **21 ms (~1.1 spots)** |
+| All frames | 226 ms (4.4 fps) | **205 ms (4.9 fps)** |
+| Visible / covered / pocket | 130 / 98 / 94 ms | 136 / 105 / 98 ms (unchanged; slightly busier run) |
+
+- **Data:** `progress/data/2026-10-13_r4-pair-round3.json`, `..._r4-pair-round4.json`, `..._r4-search-accuracy.json`
+
+**What's left in hand** (~300 ms):
+
+| Part | ms |
+|---|---|
+| Tracker | ~120 |
+| Search scan (DINOv2 at 448 px, whole picture) | ~60 |
+| Appearance checks | ~40 |
+| Rest of the logic | ~30 |
+| Clothes | ~12 |
+
+**Options:**
+- the scan on Core ML (measured 54 → 32 ms, model already exported);
+- skip the scan on frames where nothing changed along the hand's path.
+
+---
 
 ## Round 2 plan (agreed 2026-10-12; done above)
 

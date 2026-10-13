@@ -155,7 +155,8 @@ def main():
     e2 = {r["scenario"]: r for r in json.loads(E2_RESULTS.read_text())["table"]}
     OUT.mkdir(parents=True, exist_ok=True)
     device = torch.device("mps")
-    obj = ObjectState(StreamingTracker(video_predictor(device)), Appearance(device), Finder(device), Segmenter(device))
+    obj = ObjectState(StreamingTracker(video_predictor(device)), Appearance(device), Finder(device), Segmenter(device),
+                      spot_tests="--no-spot-tests" not in sys.argv)
 
     rows, cards, summary = [], [], []
     for name, (what, should, make) in st.SCENARIOS.items():

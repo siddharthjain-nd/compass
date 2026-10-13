@@ -472,7 +472,12 @@ One signal isn't enough in general, so the decision combines several.
   - 8 clips 796/807;
   - 3c torch.compile: dropped (slower on MPS);
   - 3d 768 px: +28% speed, −14 frames → available as `--size 768`, default stays 1024.
-- [ ] **Round 4:** in-hand search only when something new appears along the hand's path (or a fast detector); torch.compile try; 768 px input if still needed.
+- [x] **Round 4** (2026-10-13, `PROGRESS.md`):
+  - in-hand search outlines spots one at a time (no duplicate outlines; same masks) + cheap spot tests before outlining;
+  - outlines per held frame ~8 → ~1.1;
+  - in hand 349 → 299 ms; all frames 226 → 205 ms;
+  - E0 796/807, drawn scenes 334/336.
+- [ ] **Next:** the search scan (~60 ms in hand): Core ML (54 → 32 ms) or skip when nothing changed along the hand's path; then several objects (wake on change).
 - [x] **E5a** window around the object: memory step 62 → 22 ms for the (large) wallet; masks match the whole-frame tracker (mean IoU 0.989).
 - [ ] **E5b** multiple objects, "watch cheaply, track on wake": a resting object costs only a pixel-change check in its box; the accurate tracker runs (in a window) only for objects that moved or a hand neared, until they rest again (`RESEARCH.md` §9.8).
 - [ ] **E5c** encoder input size 1024 / 768 / 512. **E5d** helpers (hands, appearance check) at their own pace. **E5e** window the memory encoder + decoder too.

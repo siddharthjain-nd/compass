@@ -70,6 +70,7 @@ class Finder:
     GRID = 32  # 448 px / 14 px patches
     MAX_PEAKS = 10  # when searching, outline at most the 10 strongest peaks (each costs a SAM decode)
     MAX_PEAKS_RECORD = 40  # when recording which lookalikes are where, be more complete
+    one_at_a_time = True  # outline peaks one by one, skipping those inside earlier outlines (round 4; same masks)
 
     def __init__(self, device):
         self.device = device
@@ -110,9 +111,13 @@ class Finder:
         pts = [((gx + 0.5) * w / self.GRID, (gy + 0.5) * h / self.GRID) for gy, gx in zip(*np.nonzero(peaks))]
         return [(x, y) for x, y in pts if exclude is None or not exclude[int(y), int(x)]]
 
-    def candidates(self, img, segmenter, max_peaks=None, pick=None, window=None):
+    def candidates(self, img, segmenter, max_peaks=None, pick=None, window=None, worth=None):
         """Masks of separate object-looking things: one SAM mask per local peak of the similarity map.
-        `pick`: optional function choosing which peak points to outline (each outline costs a SAM decode, ~17 ms)."""
+        `pick`: optional function choosing which peak points to outline (each outline costs a SAM decode, ~17 ms).
+        `worth(x, y)`: optional cheap test of a peak before outlining it (round 4).
+        Peaks are outlined one at a time, strongest first, and a peak inside an outline already made is not outlined
+        again (same answer as outlining all and dropping duplicates afterwards; on the E0 clips 1281 of 3046 in-hand
+        outlines were such duplicates)."""
         tok = self._cached[1] if getattr(self, "_cached", (None,))[0] is img else self.tokens(img)
         sim = (tok @ self.proto).cpu().numpy()
         peaks = (sim == cv2.dilate(sim, np.ones((3, 3), np.uint8))) & (sim > self.thr)
@@ -122,9 +127,21 @@ class Finder:
         if pick is not None:
             points = pick(points)
         masks = []
-        for (x, y), m in zip(points, segmenter.segment_points(img, points, window=window)):
-            if any(k[int(y), int(x)] or mask_iou(k, m) > 0.5 for k in masks):
-                continue  # this peak lies on an object already outlined (or outlines the same object again)
+        if not self.one_at_a_time:  # round-3 behaviour (for comparisons): outline all, then drop duplicates
+            for (x, y), m in zip(points, segmenter.segment_points(img, points, window=window)):
+                if any(k[int(y), int(x)] or mask_iou(k, m) > 0.5 for k in masks):
+                    continue
+                if 0.25 * self.ref_area <= m.sum() <= 3 * self.ref_area:
+                    masks.append(m)
+            return masks
+        for x, y in points:
+            if any(k[int(y), int(x)] for k in masks):
+                continue  # this peak lies on an object already outlined
+            if worth is not None and not worth(x, y):
+                continue
+            m = segmenter.segment_points(img, [(x, y)], window=window)[0]
+            if any(mask_iou(k, m) > 0.5 for k in masks):
+                continue  # it outlines the same object again
             if 0.25 * self.ref_area <= m.sum() <= 3 * self.ref_area:
                 masks.append(m)
         return masks
@@ -284,12 +301,13 @@ class ObjectState:
     on an M2; 1 = every frame)."""
 
     def __init__(self, tracker, appearance, finder, segmenter, finder_every=1, hands=None, clothes=None,
-                 skip_when_still=True, precheck=False, window_outlines=True):
+                 skip_when_still=True, precheck=False, window_outlines=True, spot_tests=True):
         self.trk, self.app, self.finder, self.seg = tracker, appearance, finder, segmenter
         # search: quick look check of each spot before outlining it (round 2, step 2b). Off: on a quiet Mac it cost
         # about as much as it saved (look checks +75 ms, outlines -80 ms) and 4 frames of E0 accuracy
         self.precheck = precheck
         self.window_outlines = window_outlines  # search: outline each spot in a window around it (round 3b)
+        self.spot_tests = spot_tests  # in-hand search: cheap tests before outlining a spot (round 4)
         self.skip_when_still = skip_when_still  # reuse the last result while the object rests and nothing changes
         self.finder_every = finder_every
         self.hand_detector = hands
@@ -466,6 +484,8 @@ class ObjectState:
         """The object was taken: start following its holder (a detected hand, or the tracker's drift)."""
         self.state, self.detail, f["holder"], self.holder_hand = "held", None, holder, hand
         self.take_img = f["img"]  # the picture when the hand took it: anything already lying there was not put down
+        # where the hand and the object were at that moment: put down near there, it can look as it did then
+        self.take_region = _dilate(holder | self.last_visible, 25)
         self.pocket_evidence, self.pocket_spot, self.pocket_hand = 0, None, None
         self.holders.clear()
         self.holders.append(holder)
@@ -682,7 +702,7 @@ class ObjectState:
         # while the hand is seen, look where it is or was; once it is lost, look everywhere (but without the hand's
         # path as evidence, a find among lookalikes is only "maybe")
         near = self._reach() if holder is not None else None
-        found, sure = self._search(img, f["debug"], near=near) if searched else (None, False)
+        found, sure = self._search(img, f["debug"], near=near, hands=hands) if searched else (None, False)
         f["debug"]["hand_off_searched"] = searched
         if found is not None and near is None and self.known_others and mask_iou(found, self.last_visible) <= 0.3:
             sure = False
@@ -791,6 +811,38 @@ class ObjectState:
             debug["spot_sims"] = [round(float(s), 2) for s in sorted(sims, reverse=True)[:12]]
         return [p for p, s in zip(pts, sims) if s >= LOOKALIKE_SIM]
 
+    def _spot_tests(self, img, near, hands):
+        """Cheap tests of an in-hand search spot before outlining it (round 4). On the E0 clips the in-hand search
+        outlined 3046 spots, 11 of them useful (accepted or passing the checks); each test below dropped hundreds and
+        none of the 11. A spot is not outlined if it lies on a detected hand, more than one object size from where the
+        hand is or was, within 25 px of a known lookalike, or if its surroundings look as they did when the hand took
+        the object (the "already lying there" check, done before outlining instead of after) - except where the hand
+        took it."""
+        h, w = img.shape[:2]
+        on_hand = np.logical_or.reduce([hd.mask for hd in hands]) if hands else None
+        dist = cv2.distanceTransform((~near).astype(np.uint8), cv2.DIST_L2, 3)
+        size = float(np.sqrt(np.median(self.gate.areas)))
+        before = getattr(self, "take_img", None)
+        take_region = getattr(self, "take_region", None)
+        if take_region is not None and take_region.shape != (h, w):
+            take_region = None
+
+        def worth(x, y):
+            xi, yi = min(int(x), w - 1), min(int(y), h - 1)
+            if on_hand is not None and on_hand[yi, xi]:
+                return False
+            if dist[yi, xi] > size:
+                return False
+            if any(abs(x - ox) + abs(y - oy) < 25 for ox, oy in self.known_others):
+                return False
+            # (not where the hand took it: put back there, or uncovered without ever leaving, the area can look as it
+            # did when taken; drawn test scenes: releases there were noticed one picture late)
+            if take_region is not None and take_region[yi, xi]:
+                return True
+            return not _looks_unchanged(img, before, xi, yi)
+
+        return worth
+
     def _outline_window(self, img):
         """Grid cells (of 64) around each search spot to outline it in: twice the object's registered size, at least
         16; None (whole picture) if that would be most of the picture or windowed outlines are off."""
@@ -846,7 +898,7 @@ class ObjectState:
         b = cv2.cvtColor(cv2.GaussianBlur(before, (5, 5), 0), cv2.COLOR_BGR2LAB)[ys, xs].astype(np.float32)
         return float((np.linalg.norm(a - b, axis=-1) < 18).mean()) >= 0.6
 
-    def _search(self, img, debug=None, near=None):
+    def _search(self, img, debug=None, near=None, hands=None):
         """Find the object among object-looking candidates that are not known lookalikes and (if `near`) are where
         the hand is or was. Returns (mask, sure). The object's last spot wins (a hand resting over it rather than
         carrying it); otherwise the best match, unless the runner-up is about as good (then not sure).
@@ -854,7 +906,8 @@ class ObjectState:
         while the T was still in its place under where the hand had been."""
         log, passing, left = [], [], []
         pick = (lambda pts: self._precheck(img, pts, debug)) if self.precheck else None
-        for m in self.finder.candidates(img, self.seg, pick=pick, window=self._outline_window(img)):
+        worth = self._spot_tests(img, near, hands) if near is not None and self.spot_tests else None
+        for m in self.finder.candidates(img, self.seg, pick=pick, window=self._outline_window(img), worth=worth):
             ys, xs = np.nonzero(m)
             entry = {"at": [int(xs.mean()), int(ys.mean())], "area": int(m.sum())}
             log.append(entry)
@@ -897,6 +950,17 @@ class ObjectState:
         sure = (not rivals or passing[0][0] - rivals[0][0] >= 0.03) and len(self.known_others) < CLUTTER
         passing[0][2]["accepted"] = "best match" if sure else "best match, but not sure (similar things around)"
         return passing[0][1], sure
+
+
+def _looks_unchanged(img, before, x, y, r=24):
+    """Does the area around (x, y) look as it did in `before`? (smoothed Lab, as ObjectState._already_there)"""
+    if before is None or before.shape != img.shape:
+        return False
+    h, w = img.shape[:2]
+    y0, y1, x0, x1 = max(y - r, 0), min(y + r + 1, h), max(x - r, 0), min(x + r + 1, w)
+    a = cv2.cvtColor(cv2.GaussianBlur(img[y0:y1, x0:x1], (5, 5), 0), cv2.COLOR_BGR2LAB).astype(np.float32)
+    b = cv2.cvtColor(cv2.GaussianBlur(before[y0:y1, x0:x1], (5, 5), 0), cv2.COLOR_BGR2LAB).astype(np.float32)
+    return float((np.linalg.norm(a - b, axis=-1) < 18).mean()) >= 0.6
 
 
 def _dilate(mask, r):
