@@ -23,14 +23,14 @@ import math
 import torch
 import torch.nn.functional as F
 
-GRID = 64  # EdgeTAM's feature grid (1024 px input / 16)
 
 
 class Window:
     def __init__(self, predictor, margin=0.5, min_cells=16, max_share=0.75):
         from sam2.modeling.sam2_base import NO_OBJ_SCORE
 
-        self.p, self.margin, self.min_cells, self.max_cells = predictor, margin, min_cells, int(max_share * GRID)
+        self.grid = predictor.image_size // 16  # EdgeTAM's feature grid: 64 x 64 at 1024 px
+        self.p, self.margin, self.min_cells, self.max_cells = predictor, margin, min_cells, int(max_share * self.grid)
         self.no_obj = NO_OBJ_SCORE
         self.cell = None  # (x0, y0, size) in grid cells, or None: whole frame
         self.enabled = True
@@ -61,23 +61,23 @@ class Window:
         if not self.enabled:
             return
         h, w = hw
-        x0, x1 = box[0] * GRID / w, box[2] * GRID / w
-        y0, y1 = box[1] * GRID / h, box[3] * GRID / h
+        x0, x1 = box[0] * self.grid / w, box[2] * self.grid / w
+        y0, y1 = box[1] * self.grid / h, box[3] * self.grid / h
         side = max(x1 - x0, y1 - y0)
         size = max(self.min_cells, math.ceil(side * (1 + 2 * self.margin)))
         size = 4 * math.ceil(size / 4)  # few distinct sizes
         if size > self.max_cells:
             return
         cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-        gx = min(max(round(cx - size / 2), 0), GRID - size)
-        gy = min(max(round(cy - size / 2), 0), GRID - size)
+        gx = min(max(round(cx - size / 2), 0), self.grid - size)
+        gy = min(max(round(cy - size / 2), 0), self.grid - size)
         self.cell = (gx, gy, size)
 
     def _index(self, device):
         gx, gy, s = self.cell
         ys = torch.arange(gy, gy + s, device=device)
         xs = torch.arange(gx, gx + s, device=device)
-        return (ys[:, None] * GRID + xs[None, :]).reshape(-1)
+        return (ys[:, None] * self.grid + xs[None, :]).reshape(-1)
 
     # ------------------------------------------------------------------ memory step
 
@@ -98,7 +98,7 @@ class Window:
         finally:
             for cross, full in zip(self._cross, self._full_q):
                 cross.freqs_cis_q = full
-        out = c.new_zeros((GRID * GRID,) + tuple(out_w.shape[1:]))  # outside the window: never read (see decoder)
+        out = c.new_zeros((self.grid * self.grid,) + tuple(out_w.shape[1:]))  # outside the window: never read (see decoder)
         out[idx] = out_w
         self._armed = True
         self.windowed += 1
@@ -130,7 +130,7 @@ class Window:
         if p.pred_obj_scores:
             is_obj = obj_logits > 0
             low_w = torch.where(is_obj[:, None, None], low_w, self.no_obj)
-        low = torch.full((B, low_w.shape[1], 4 * GRID, 4 * GRID), self.no_obj, device=dev)
+        low = torch.full((B, low_w.shape[1], 4 * self.grid, 4 * self.grid), self.no_obj, device=dev)
         low[:, :, 4 * gy:4 * (gy + s), 4 * gx:4 * (gx + s)] = low_w.float()
         high = F.interpolate(low, size=(p.image_size, p.image_size), mode="bilinear", align_corners=False)
         token = tokens[:, 0]

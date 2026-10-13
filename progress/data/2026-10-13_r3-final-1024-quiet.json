@@ -1,0 +1,126 @@
+{
+ "step": "r3-final-1024-quiet",
+ "date": "2026-10-13",
+ "note": "round 3 final default (Core ML encoder, 1024 px, windowed outlines), quietest timing so far (reference 108 ms). E0: 796/807 (see r3ab-final).",
+ "timing": {
+  "all": {
+   "frames": 858,
+   "total_ms": 226.7,
+   "fps": 4.41,
+   "median_total_ms": 200.5,
+   "parts_ms": {
+    "tracker": 92.8,
+    "appearance": 22.2,
+    "hands": 27.2,
+    "explainer": 9.3,
+    "finder scan": 27.4,
+    "finder outlines": 47.4,
+    "clothes": 5.8,
+    "other": 21.7
+   },
+   "share_skipped": 0.16
+  },
+  "state: covered": {
+   "frames": 73,
+   "total_ms": 94.0,
+   "fps": 10.64,
+   "median_total_ms": 103.9,
+   "parts_ms": {
+    "tracker": 61.2,
+    "appearance": 2.5,
+    "hands": 25.0,
+    "explainer": 18.4,
+    "finder scan": 0.8,
+    "finder outlines": 0.0,
+    "clothes": 0.0,
+    "other": 11.1
+   },
+   "share_skipped": 0.27
+  },
+  "state: in hand": {
+   "frames": 398,
+   "total_ms": 352.0,
+   "fps": 2.84,
+   "median_total_ms": 352.5,
+   "parts_ms": {
+    "tracker": 116.8,
+    "appearance": 37.6,
+    "hands": 28.0,
+    "explainer": 2.7,
+    "finder scan": 57.1,
+    "finder outlines": 98.5,
+    "clothes": 12.6,
+    "other": 26.6
+   },
+   "share_skipped": 0.0
+  },
+  "state: in pocket": {
+   "frames": 101,
+   "total_ms": 92.6,
+   "fps": 10.8,
+   "median_total_ms": 113.0,
+   "parts_ms": {
+    "tracker": 61.4,
+    "appearance": 4.0,
+    "hands": 22.9,
+    "explainer": 0.0,
+    "finder scan": 1.1,
+    "finder outlines": 0.4,
+    "clothes": 0.0,
+    "other": 25.7
+   },
+   "share_skipped": 0.37
+  },
+  "state: unknown": {
+   "frames": 1,
+   "total_ms": 326.2,
+   "fps": 3.07,
+   "median_total_ms": 326.2,
+   "parts_ms": {
+    "tracker": 88.3,
+    "appearance": 29.2,
+    "hands": 21.4,
+    "explainer": 0.0,
+    "finder scan": 56.1,
+    "finder outlines": 132.8,
+    "clothes": 0.0,
+    "other": 19.8
+   },
+   "share_skipped": 0.0
+  },
+  "state: unsure": {
+   "frames": 6,
+   "total_ms": 195.3,
+   "fps": 5.12,
+   "median_total_ms": 200.8,
+   "parts_ms": {
+    "tracker": 125.6,
+    "appearance": 15.4,
+    "hands": 26.5,
+    "explainer": 45.1,
+    "finder scan": 0.0,
+    "finder outlines": 0.0,
+    "clothes": 0.0,
+    "other": 9.2
+   },
+   "share_skipped": 0.0
+  },
+  "state: visible": {
+   "frames": 279,
+   "total_ms": 131.5,
+   "fps": 7.6,
+   "median_total_ms": 138.8,
+   "parts_ms": {
+    "tracker": 77.5,
+    "appearance": 12.1,
+    "hands": 28.2,
+    "explainer": 18.9,
+    "finder scan": 2.0,
+    "finder outlines": 4.6,
+    "clothes": 0.0,
+    "other": 16.4
+   },
+   "share_skipped": 0.29
+  }
+ }
+}

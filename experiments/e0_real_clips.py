@@ -168,13 +168,17 @@ def main():
     ap.add_argument("--stride", type=int, default=5, help="use every Nth frame of the 15 fps clips (5 = 3 fps)")
     ap.add_argument("--clip", action="append", help="only these clips (default: all)")
     ap.add_argument("--precheck", action="store_true", help="search: quick look check of each spot before outlining")
+    ap.add_argument("--encoder", default="torch", help="tracker image encoder: torch | coreml | coreml-gpu (round 3a)")
+    ap.add_argument("--no-window-outlines", action="store_true", help="search: outline spots on the whole picture")
+    ap.add_argument("--size", type=int, default=1024, help="tracker input picture size (EdgeTAM was trained at 1024)")
     ap.add_argument("--no-window", action="store_true", help="track on the whole frame (the live app tracks only "
                     "around the object by default, compass.window)")
     args = ap.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
     dev = device()
-    obj = ObjectState(StreamingTracker(video_predictor(dev), window=not args.no_window), Appearance(dev), Finder(dev), Segmenter(dev),
-                      hands=HandDetector(), clothes=ClothesSegmenter(), precheck=args.precheck)
+    obj = ObjectState(StreamingTracker(video_predictor(dev, args.size), window=not args.no_window, encoder=args.encoder), Appearance(dev), Finder(dev), Segmenter(dev, args.size),
+                      hands=HandDetector(), clothes=ClothesSegmenter(), precheck=args.precheck,
+                      window_outlines=not args.no_window_outlines)
     results, cards = {}, []
     for name, clip in CLIPS.items():
         if args.clip and name not in args.clip:

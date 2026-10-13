@@ -67,4 +67,9 @@ else
   (cd "$TP/sam2" && SAM2_BUILD_CUDA=0 python -m pip install -q -e .)
   echo "sam2 package: installed"
 fi
+
+# Mac only: EdgeTAM's image encoder as a Core ML model (Neural Engine), used by the tracker (compass/coreml_encoder.py).
+if [ "$(uname)" = "Darwin" ] && [ ! -d "$TP/models/edgetam_image_encoder_video.mlpackage" ]; then
+  (cd "$ROOT" && python -m compass.coreml_encoder) || echo "Core ML export skipped (needs coremltools; the tracker falls back to PyTorch)"
+fi
 echo "done"

@@ -1,0 +1,94 @@
+{
+ "step": "r3d-768-tracker-only",
+ "date": "2026-10-13",
+ "note": "tracker only, PyTorch both, window on: 1024 ('full') vs 768 ('win'); IoU per frame",
+ "all": {
+  "frames": 858,
+  "mean_iou": 0.978,
+  "share_iou_below_0.8": 0.009,
+  "median_full_ms": 177.4,
+  "median_win_ms": 114.6
+ },
+ "clips": {
+  "20261009-001949": {
+   "frames": 127,
+   "mean_iou": 0.985,
+   "share_iou_below_0.8": 0.0,
+   "share_windowed": 0.53,
+   "median_full_ms": 205.2,
+   "median_win_ms": 120.0,
+   "median_win_ms_when_windowed": 106.5,
+   "median_window_cells": 36.0
+  },
+  "20261009-002032": {
+   "frames": 121,
+   "mean_iou": 0.989,
+   "share_iou_below_0.8": 0.0,
+   "share_windowed": 0.64,
+   "median_full_ms": 172.0,
+   "median_win_ms": 112.7,
+   "median_win_ms_when_windowed": 106.0,
+   "median_window_cells": 32.0
+  },
+  "20261009-002110": {
+   "frames": 71,
+   "mean_iou": 0.983,
+   "share_iou_below_0.8": 0.0,
+   "share_windowed": 0.72,
+   "median_full_ms": 169.5,
+   "median_win_ms": 109.2,
+   "median_win_ms_when_windowed": 104.8,
+   "median_window_cells": 36.0
+  },
+  "20261009-002136": {
+   "frames": 191,
+   "mean_iou": 0.987,
+   "share_iou_below_0.8": 0.0,
+   "share_windowed": 0.48,
+   "median_full_ms": 203.0,
+   "median_win_ms": 119.4,
+   "median_win_ms_when_windowed": 97.6,
+   "median_window_cells": 20.0
+  },
+  "20261009-002327": {
+   "frames": 85,
+   "mean_iou": 0.957,
+   "share_iou_below_0.8": 0.024,
+   "share_windowed": 0.68,
+   "median_full_ms": 164.2,
+   "median_win_ms": 107.7,
+   "median_win_ms_when_windowed": 100.6,
+   "median_window_cells": 18.0
+  },
+  "20261009-002445": {
+   "frames": 70,
+   "mean_iou": 0.984,
+   "share_iou_below_0.8": 0.0,
+   "share_windowed": 0.93,
+   "median_full_ms": 168.1,
+   "median_win_ms": 106.5,
+   "median_win_ms_when_windowed": 106.2,
+   "median_window_cells": 32.0
+  },
+  "20261012-113549": {
+   "frames": 122,
+   "mean_iou": 0.945,
+   "share_iou_below_0.8": 0.049,
+   "share_windowed": 0.48,
+   "median_full_ms": 201.3,
+   "median_win_ms": 117.5,
+   "median_win_ms_when_windowed": 107.2,
+   "median_window_cells": 32.0
+  },
+  "20261012-113643": {
+   "frames": 71,
+   "mean_iou": 0.994,
+   "share_iou_below_0.8": 0.0,
+   "share_windowed": 0.42,
+   "median_full_ms": 199.6,
+   "median_win_ms": 115.1,
+   "median_win_ms_when_windowed": 102.5,
+   "median_window_cells": 32.0
+  }
+ }
+}

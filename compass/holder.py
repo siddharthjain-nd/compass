@@ -110,7 +110,7 @@ class Finder:
         pts = [((gx + 0.5) * w / self.GRID, (gy + 0.5) * h / self.GRID) for gy, gx in zip(*np.nonzero(peaks))]
         return [(x, y) for x, y in pts if exclude is None or not exclude[int(y), int(x)]]
 
-    def candidates(self, img, segmenter, max_peaks=None, pick=None):
+    def candidates(self, img, segmenter, max_peaks=None, pick=None, window=None):
         """Masks of separate object-looking things: one SAM mask per local peak of the similarity map.
         `pick`: optional function choosing which peak points to outline (each outline costs a SAM decode, ~17 ms)."""
         tok = self._cached[1] if getattr(self, "_cached", (None,))[0] is img else self.tokens(img)
@@ -122,7 +122,7 @@ class Finder:
         if pick is not None:
             points = pick(points)
         masks = []
-        for (x, y), m in zip(points, segmenter.segment_points(img, points)):
+        for (x, y), m in zip(points, segmenter.segment_points(img, points, window=window)):
             if any(k[int(y), int(x)] or mask_iou(k, m) > 0.5 for k in masks):
                 continue  # this peak lies on an object already outlined (or outlines the same object again)
             if 0.25 * self.ref_area <= m.sum() <= 3 * self.ref_area:
@@ -140,8 +140,8 @@ class Segmenter:
 
     WIDTH = 640
 
-    def __init__(self, device):
-        self.pred = image_predictor(device)
+    def __init__(self, device, image_size=1024):
+        self.pred = image_predictor(device, image_size)  # same size as the tracker: it reuses the tracker's features
         self.last_image = None
         self.k = 1.0
         self._shared = (None, None)
@@ -162,10 +162,17 @@ class Segmenter:
         p._is_image_set, p._orig_hw = True, [hw]
 
     @torch.inference_mode()
-    def segment_points(self, img, points):
+    def segment_points(self, img, points, window=None):
+        """One outline per point. `window` (grid cells, on shared full-resolution features): outline each point in a
+        window x window square of EdgeTAM's 64x64 feature grid around it instead of the whole picture (round 3b)."""
         if not points:
             return []
         h, w = img.shape[:2]
+        if window and self._shared[0] is img and self._shared[1] is not None:
+            if self.last_image is not img:
+                self._use_features(self._shared[1], (h, w))
+                self.k, self.last_image = 1.0, img
+            return [self._segment_in_window(pt, window, (h, w)) for pt in points]
         if self.last_image is not img:
             if self._shared[0] is img and self._shared[1] is not None:
                 self._use_features(self._shared[1], (h, w))
@@ -182,6 +189,31 @@ class Segmenter:
         masks = masks.reshape(len(points), *masks.shape[-2:]) > 0
         return [cv2.resize(m.astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST).astype(bool) if k < 1 else m
                 for m in masks]
+
+    def _segment_in_window(self, pt, s, hw):
+        """Outline the object under `pt` from the s x s grid cells around it: the mask decoder sees the window's
+        features with their true positions (sliced, as in compass.window); outside the window the outline is empty."""
+        p, (h, w), g = self.pred, hw, self.pred.model.image_size // 16
+        gx = min(max(round(pt[0] * g / w - s / 2), 0), g - s)
+        gy = min(max(round(pt[1] * g / h - s / 2), 0), g - s)
+        win = (slice(None), slice(None), slice(gy, gy + s), slice(gx, gx + s))
+        hr0, hr1 = p._features["high_res_feats"]
+        coords = torch.tensor([[[float(pt[0]) * p.model.image_size / w, float(pt[1]) * p.model.image_size / h]]],
+                              dtype=torch.float32, device=hr0.device)
+        labels = torch.ones(1, 1, dtype=torch.int, device=hr0.device)
+        sparse, dense = p.model.sam_prompt_encoder(points=(coords, labels), boxes=None, masks=None)
+        low, _, _, _ = p.model.sam_mask_decoder(
+            image_embeddings=p._features["image_embed"][win].contiguous(),
+            image_pe=p.model.sam_prompt_encoder.get_dense_pe()[win].contiguous(),
+            sparse_prompt_embeddings=sparse, dense_prompt_embeddings=dense[win].contiguous(),
+            multimask_output=False, repeat_image=False,
+            high_res_features=[hr0[:, :, 4 * gy:4 * (gy + s), 4 * gx:4 * (gx + s)].contiguous(),
+                               hr1[:, :, 2 * gy:2 * (gy + s), 2 * gx:2 * (gx + s)].contiguous()])
+        x0, x1, y0, y1 = round(gx * w / g), round((gx + s) * w / g), round(gy * h / g), round((gy + s) * h / g)
+        logits = cv2.resize(low[0, 0].float().cpu().numpy(), (x1 - x0, y1 - y0), interpolation=cv2.INTER_LINEAR)
+        mask = np.zeros((h, w), bool)
+        mask[y0:y1, x0:x1] = logits > 0
+        return mask
 
     def segment_point(self, img, xy):
         return self.segment_points(img, [xy])[0]
@@ -252,11 +284,12 @@ class ObjectState:
     on an M2; 1 = every frame)."""
 
     def __init__(self, tracker, appearance, finder, segmenter, finder_every=1, hands=None, clothes=None,
-                 skip_when_still=True, precheck=False):
+                 skip_when_still=True, precheck=False, window_outlines=True):
         self.trk, self.app, self.finder, self.seg = tracker, appearance, finder, segmenter
         # search: quick look check of each spot before outlining it (round 2, step 2b). Off: on a quiet Mac it cost
         # about as much as it saved (look checks +75 ms, outlines -80 ms) and 4 frames of E0 accuracy
         self.precheck = precheck
+        self.window_outlines = window_outlines  # search: outline each spot in a window around it (round 3b)
         self.skip_when_still = skip_when_still  # reuse the last result while the object rests and nothing changes
         self.finder_every = finder_every
         self.hand_detector = hands
@@ -758,6 +791,17 @@ class ObjectState:
             debug["spot_sims"] = [round(float(s), 2) for s in sorted(sims, reverse=True)[:12]]
         return [p for p, s in zip(pts, sims) if s >= LOOKALIKE_SIM]
 
+    def _outline_window(self, img):
+        """Grid cells (of 64) around each search spot to outline it in: twice the object's registered size, at least
+        16; None (whole picture) if that would be most of the picture or windowed outlines are off."""
+        if not self.window_outlines:
+            return None
+        h, w = img.shape[:2]
+        bw, bh = self.obj_box[2] - self.obj_box[0], self.obj_box[3] - self.obj_box[1]
+        g = self.seg.pred.model.image_size // 16  # feature grid: 64 at 1024 px
+        s = 4 * int(np.ceil(max(16, 2 * max(bw * g / w, bh * g / h)) / 4))
+        return s if s <= 0.75 * g else None
+
     def _precheck(self, img, points, debug=None):
         """Which search spots are worth outlining: a quick look check of an object-sized box around each (one batch,
         ~20 ms), keeping the PRECHECK_KEEP best that reach PRECHECK_SIM, plus the spot nearest the object's last spot
@@ -810,7 +854,7 @@ class ObjectState:
         while the T was still in its place under where the hand had been."""
         log, passing, left = [], [], []
         pick = (lambda pts: self._precheck(img, pts, debug)) if self.precheck else None
-        for m in self.finder.candidates(img, self.seg, pick=pick):
+        for m in self.finder.candidates(img, self.seg, pick=pick, window=self._outline_window(img)):
             ys, xs = np.nonzero(m)
             entry = {"at": [int(xs.mean()), int(ys.mean())], "area": int(m.sum())}
             log.append(entry)

@@ -21,9 +21,11 @@ class StreamingTracker:
     KEEP_RECENT = 16  # EdgeTAM reads up to 16 past frames (object pointers); memory itself uses 6
     KEEP_COND = 4  # conditioning frames kept: the first one + the latest 3 re-initialisations
 
-    def __init__(self, predictor, window=False):
+    def __init__(self, predictor, window=False, encoder="torch"):
         """window: track only around the object (compass.window, E5a): the memory step and mask decoder run on a
-        window around the last mask instead of the whole frame."""
+        window around the last mask instead of the whole frame.
+        encoder: "torch" (PyTorch on the GPU) or "coreml" / "coreml-gpu" (EdgeTAM's image encoder through Core ML on
+        the Neural Engine / the GPU, compass.coreml_encoder; round 3a)."""
         self.p = predictor
         self.state = None
         self.t = -1
@@ -33,6 +35,11 @@ class StreamingTracker:
             from compass.window import Window
             self.window = Window(predictor)
         self._last = None
+        self.coreml = None
+        if encoder.startswith("coreml"):
+            from compass.coreml_encoder import CoreMLEncoder
+            self.coreml = CoreMLEncoder(predictor, "CPU_AND_GPU" if encoder == "coreml-gpu" else "ALL")
+            predictor.forward_image = self.coreml.forward_image  # used by the tracker and by re-initialisations
 
     # ------------------------------------------------------------ public API
 
@@ -120,6 +127,10 @@ class StreamingTracker:
         0.3 grey levels on average. The normalisation runs on the GPU (it took ~10 ms in float64 on the CPU)."""
         size, dev = self.p.image_size, self.p.device
         rgb = cv2.cvtColor(cv2.resize(img_bgr, (size, size), interpolation=cv2.INTER_CUBIC), cv2.COLOR_BGR2RGB)
+        if self.coreml:  # Core ML takes the picture itself (normalisation is inside the model)
+            self.coreml.set_image(rgb)
+            self.state["images"] = {self.t: torch.zeros(3, 1, 1)}  # EdgeTAM reads this slot but not its content
+            return
         if self._mean is None:
             self._mean, self._std = MEAN.to(dev), STD.to(dev)
         x = torch.from_numpy(rgb).to(dev).permute(2, 0, 1).float().div_(255).sub_(self._mean).div_(self._std)

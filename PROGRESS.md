@@ -12,12 +12,33 @@ One entry per step: what we tried, why, the numbers, and what we decided. Newest
 
 ---
 
-## Where we are now (2026-10-12, after speed round 2)
+## Where we are now (2026-10-13, after speed round 3)
 
-One registered object, MacBook M2, PyTorch on the Mac GPU. Timings are from quiet-Mac runs.
+One registered object, MacBook M2. Tracker image step on the Neural Engine (Core ML), the rest on the GPU (PyTorch). Timings are from quiet-Mac runs (round 3: the quietest paired run).
 
-| | Start of speed work (2026-10-09) | After round 1 (2026-10-11) | After round 2 (2026-10-12) |
-|---|---|---|---|
+| | Start (2026-10-09) | Round 1 | Round 2 | **Round 3 (default, 1024 px)** | Round 3, 768 px option |
+|---|---|---|---|---|---|
+| Wallet visible | 404 ms (2.5 fps) | 217 ms | 191–211 ms | **131–161 ms (6–7.6 fps)** | 108 ms (9.3 fps) |
+| Wallet in hand | 813 ms (1.2 fps) | 452–460 ms | 452 ms | **352–445 ms (2.2–2.8 fps)** | 289 ms (3.5 fps) |
+| Covered | 462 ms | 475 ms | 145–169 ms | **94–122 ms (8–10.6 fps)** | 77 ms (13 fps) |
+| In pocket | 380 ms | 188 ms | 133 ms | **93–109 ms (9–10.8 fps)** | 74 ms (13.6 fps) |
+| Live replay, clip 2 | ~2.5 fps | 3.9 fps | 4.4 fps | **5.5–6.6 fps** | 7.6 fps |
+| Score, all 8 clips | — | — | 794/807 | **796/807 (98.6%)** | 782/807 (96.9%) |
+| Other-wallet frames | 0 | 0 | 0 | 0 | 0 |
+
+(Round-3 ranges: two quiet runs a few hours apart; same code.)
+
+---|---|---|---|---|
+| Wallet visible | 404 ms (2.5 fps) | 217 ms | 191–211 ms | **161 ms (6.2 fps)** |
+| Wallet in hand | 813 ms (1.2 fps) | 452–460 ms | 452 ms | 445 ms (2.2 fps) |
+| Covered | 462 ms | 475 ms | 145–169 ms | **122 ms (8.2 fps)** |
+| In pocket | 380 ms | 188 ms | 133 ms | **109 ms (9.2 fps)** |
+| Live replay, clip 2 | ~2.5 fps | 3.9 fps | 4.4 fps | **6.6 fps** |
+| Score, 6 original clips | 615/624 | 616/624 | 616/624 | 616/624 |
+| Score, all 8 clips | — | — | 794/807 | **796/807 (98.6%)** |
+| Other-wallet frames | 0 | 0 | 0 | 0 |
+
+---|---|---|---|
 | Wallet visible | 404 ms (2.5 fps) | 217 ms (4.6 fps) | 211 ms (4.7 fps) |
 | Wallet in hand | 813 ms (1.2 fps) | 452–460 ms (≈2.2 fps) | ≈ same as round 1 |
 | Covered | 462 ms | 475 ms | **169 ms (5.9 fps)** |
@@ -411,6 +432,108 @@ E0 now has 8 clips, 807 scored frames.
 - **Data:** `progress/data/2026-10-12_r2-final-quiet-mac.json`
 
 ---
+
+## Speed round 3 (2026-10-13): Core ML image step + windowed search outlines
+
+### Step 3a · EdgeTAM's image encoder through Core ML (`compass/coreml_encoder.py`): **kept** (default in the live app)
+- **What:** our own export of EdgeTAM's `forward_image` (the three feature maps the tracker uses), with the ImageNet normalisation inside the model.
+  - EdgeTAM's shipped export is for single images: it skips the normalisation and adds the "no memory" embedding, which the video tracker must not have.
+  - The positional encodings don't depend on the picture, so they are computed once.
+  - Export: `python -m compass.coreml_encoder` (also run by `setup_third_party.sh` on a Mac). It writes `third_party/models/edgetam_image_encoder_video.mlpackage`, 9.6 MB.
+- **Encoder alone:**
+
+  | Runtime | ms | Feature difference vs PyTorch |
+  |---|---|---|
+  | PyTorch (MPS) | 93 | — |
+  | **Core ML, Neural Engine** | **27** | ~5% on average (fp16) |
+  | Core ML, GPU | 57 | 0.8% |
+
+- **Tracker only, all 8 clips** (window on in both): masks vs PyTorch mean IoU **0.993**, 0.3% of frames below 0.8 (only the new pocket clip). Tracker step 237 → 153 ms (−36%).
+- **E0:** **792/807** (−2 vs round 2; clip 4 −4, new pocket clip +2). 0 other-wallet frames.
+- **Data:** `progress/data/2026-10-13_r3a-coreml-encoder.json`, `..._r3a-coreml-tracker-only.json`
+
+### Step 3b · Outline each search spot in a window around it: **kept, but no speed gain for the user's wallet**
+- **What:** the mask decoder works on a square of EdgeTAM's feature grid around the spot (twice the registered object's size, at least 16 of 64 cells; the whole picture above 48), with the true positions, as in `compass/window.py`.
+- **Outlines only:** 172 → 143 ms per in-hand frame. Mean IoU vs whole-picture outlines 0.970 (2.8% below 0.8).
+  - The wallet is big (windows 48–52 of 64 cells, so nearly the whole picture).
+  - Each spot is decoded separately.
+- **E0 with 3a + 3b:** **796/807 (98.6%)**, 0 other-wallet frames.
+- **Full system:** search outlines ~120 ms per in-hand frame either way. Small objects should gain more.
+
+### Round 3 · Quiet-Mac paired timing (2026-10-13 00:48–01:10)
+- **Conditions:** the old-explainer reference measured 104–130 ms around both runs; a first PyTorch run during a load spike was discarded.
+- **Results** (all 8 clips):
+
+  | State | Round-2 settings (PyTorch) | **Round 3 (Core ML + windowed outlines)** |
+  |---|---|---|
+  | Visible | 191 ms (5.2 fps) | **161 ms (6.2 fps)** |
+  | Covered | 145 ms (6.9 fps) | **122 ms (8.2 fps)** |
+  | In pocket | 133 ms (7.5 fps) | **109 ms (9.2 fps)** |
+  | In hand | 452 ms (2.2 fps) | 445 ms (2.2 fps) |
+  | All frames | 292 ms | 284 ms |
+  | Live replay, clip 2 | 4.4 fps | **6.6 fps** |
+
+- **Tracker part per state** (ms): visible 131 → 92, covered 109 → 74, pocket 100 → 70, in hand 188 → 148.
+- **In hand is unchanged** because the in-hand search dominates it (scan 60–80 + outlines ~120 ms) and round 3 didn't reduce it.
+- **Data:** `progress/data/2026-10-13_r3-pair-torch-quiet.json` (round-2 settings), `..._r3ab-final.json`
+
+**What's left:**
+- **In hand (~445 ms):** the search, ~200 ms. It runs on every in-hand frame to catch a put-down quickly. Next idea: search only when something new appears along the hand's path (a cheap pixel check against the picture from when the hand took the object), or a fast detector.
+- **Visible (~160 ms):** tracker ~130 ms per tracked frame (memory steps + decoder in PyTorch now), hands ~30, explainer ~25.
+
+---
+
+### Round 3 · Assessment of 3a/3b and extra tries (2026-10-13)
+- **3a improvement tried: the search's scan model (DINOv2 ViT-S at 448 px) on Core ML.**
+  - The TorchScript route failed on timm's size arithmetic; the `torch.export` route worked.
+  - 54 → 32 ms (Neural Engine). Tokens near-identical (cosine 0.9998; similarity maps within 0.04).
+  - **Not wired in:** it saves ~22 ms of a ~445 ms in-hand frame. The round-4 idea (search only when something new appears along the hand's path) would make the scan rare anyway.
+  - The model is at `third_party/models/dinov2_vits14_448_tokens.mlpackage` if needed later.
+- **3b:** no change. Batching all windowed outlines into one decoder call would need a rewrite of SAM's mask decoder (it accepts one positional table per call). Not worth it for a big object.
+
+### Step 3c · torch.compile on the tracker (memory step, decoder, memory encoder): **dropped**
+
+| Mode | Tracker step | Outlines |
+|---|---|---|
+| Normal | 209 ms | — |
+| `inductor` | 263 ms (slower; "does not support code generation for complex operators": the memory step's rotary positions use complex numbers) | identical (IoU 1.000) |
+| `aot_eager` | 214 ms (no gain) | identical (IoU 1.000) |
+
+Worth retrying on NVIDIA (TensorRT / inductor there is mature).
+
+### Step 3d · 768 px input picture (EdgeTAM was trained at 1024)
+- **What changes with size:** the feature grid becomes 48×48 instead of 64×64. The memory compressor (perceiver) adapts (16×16 windows of 3 cells instead of 4). The memory step's query position table must match: `q_sizes=[48,48]`, set in `compass/models.py`.
+- **Tracker only, PyTorch both, all 8 clips:**
+  - IoU vs 1024 is **0.978** mean, 0.9% of frames below 0.8 (worse on fast moves: pocket clips 2.4–4.9%);
+  - tracker step 177 → 115 ms (−35%).
+  - For comparison, Core ML at 1024 agreed at 0.993.
+- **Full system (Core ML at both sizes, windowed outlines; paired on a quiet Mac, reference 108 ms before and after):**
+
+  | State | 1024 px | 768 px |
+  |---|---|---|
+  | Visible | 131 ms (7.6 fps) | **108 ms (9.3 fps)** |
+  | In hand | 352 ms (2.8 fps) | **289 ms (3.5 fps)** |
+  | Covered | 94 ms (10.6 fps) | 77 ms (13.0 fps) |
+  | In pocket | 93 ms (10.8 fps) | 74 ms (13.6 fps) |
+  | All frames | 227 ms (4.4 fps) | **177 ms (5.6 fps), +28%** |
+  | E0, 8 clips | **796/807 (98.6%)** | 782/807 (96.9%), −14 |
+
+  - The 14 lost frames are in clip 1 (turned in hand) and clip 4 (close to the camera): 12× "in hand" → "not sure", 2× → "covered", 1× → "lost". Honest misses, 0 other-wallet frames. The pocket and paper clips are unchanged.
+- **Decision:** keep **1024 as the default** (accuracy) and offer **768 as a speed option** (`python -m compass.live --size 768`; Core ML model: `python -m compass.coreml_encoder 768`).
+- **Data:** `progress/data/2026-10-13_r3d-768px.json`, `..._r3-final-1024-quiet.json`, `..._r3d-768-tracker-only.json`
+
+### Round 3 final
+- **Default:** Core ML image encoder at 1024 px + windowed search outlines.
+- **Quietest paired timing:**
+  - visible **131 ms (7.6 fps)**;
+  - in hand **352 ms (2.8 fps)**;
+  - covered 94 ms (10.6 fps);
+  - in pocket 93 ms (10.8 fps);
+  - all 227 ms (4.4 fps).
+- **E0:** 796/807, 0 other-wallet frames.
+- **Speed option (768 px):** visible 9.3 fps, in hand 3.5 fps, E0 782/807.
+- **Dropped:** torch.compile (slower on the Mac). Scan model on Core ML: tried, not wired in (−22 ms).
+- **Timing noise:** the same code measured visible 131–161 ms on two quiet runs a few hours apart. Paired back-to-back runs remain the only fair comparison.
 
 ## Round 2 plan (agreed 2026-10-12; done above)
 

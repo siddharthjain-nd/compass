@@ -465,7 +465,14 @@ One signal isn't enough in general, so the decision combines several.
   - explainer on a crop (same answers, 3.3× faster);
   - 8 clips 794/807;
   - quiet Mac: covered 475 → 169 ms, pocket 188 → 133 ms, visible and in hand unchanged.
-- [ ] **Round 3:** Core ML for the image step, torch.compile try, 768 px input if still needed (E5c); cheaper pre-check crops.
+- [x] **Round 3** (2026-10-13, `PROGRESS.md`):
+  - Core ML image encoder (`compass/coreml_encoder.py`, default in the live app): 93 → 27 ms;
+  - windowed search outlines (no gain for the big wallet);
+  - visible 191 → 131–161 ms, covered → 94–122, pocket → 93–109; live replay 5.5–6.6 fps;
+  - 8 clips 796/807;
+  - 3c torch.compile: dropped (slower on MPS);
+  - 3d 768 px: +28% speed, −14 frames → available as `--size 768`, default stays 1024.
+- [ ] **Round 4:** in-hand search only when something new appears along the hand's path (or a fast detector); torch.compile try; 768 px input if still needed.
 - [x] **E5a** window around the object: memory step 62 → 22 ms for the (large) wallet; masks match the whole-frame tracker (mean IoU 0.989).
 - [ ] **E5b** multiple objects, "watch cheaply, track on wake": a resting object costs only a pixel-change check in its box; the accurate tracker runs (in a window) only for objects that moved or a hand neared, until they rest again (`RESEARCH.md` §9.8).
 - [ ] **E5c** encoder input size 1024 / 768 / 512. **E5d** helpers (hands, appearance check) at their own pace. **E5e** window the memory encoder + decoder too.

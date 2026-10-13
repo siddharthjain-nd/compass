@@ -108,6 +108,13 @@ def main():
     ap.add_argument("--no-pocket", action="store_true", help="don't run pocket detection (clothes segmenter)")
     ap.add_argument("--no-window", action="store_true",
                     help="track on the whole frame instead of only around the object (slower; for comparison)")
+    ap.add_argument("--encoder", default="coreml", choices=["coreml", "coreml-gpu", "torch"],
+                    help="tracker image encoder: Core ML on the Neural Engine (default; ~3x faster), on the GPU, or "
+                         "PyTorch. Falls back to PyTorch if the Core ML model is missing")
+    ap.add_argument("--no-window-outlines", action="store_true", help="search: outline spots on the whole picture")
+    ap.add_argument("--size", type=int, default=1024, choices=[1024, 768],
+                    help="tracker input size: 1024 (trained size, most accurate) or 768 (~25%% faster, a few more "
+                         "'not sure' while held; Core ML model: python -m compass.coreml_encoder 768)")
     ap.add_argument("--no-skip", action="store_true",
                     help="run the tracker on every frame, even while the object rests and nothing changes")
     ap.add_argument("--mirror", action=argparse.BooleanOptionalAction, default=None,
@@ -144,8 +151,14 @@ def main():
             from compass.body import ClothesSegmenter
 
             clothes = ClothesSegmenter()
-    obj = ObjectState(StreamingTracker(video_predictor(dev), window=not args.no_window), Appearance(dev), Finder(dev),
-                      Segmenter(dev), skip_when_still=not args.no_skip,
+    predictor = video_predictor(dev, args.size)
+    try:
+        tracker = StreamingTracker(predictor, window=not args.no_window, encoder=args.encoder)
+    except (FileNotFoundError, ImportError) as e:  # no Core ML model / coremltools: PyTorch works everywhere
+        print(f"Core ML encoder unavailable ({e}); using PyTorch", flush=True)
+        tracker = StreamingTracker(predictor, window=not args.no_window)
+    obj = ObjectState(tracker, Appearance(dev), Finder(dev),
+                      Segmenter(dev, args.size), skip_when_still=not args.no_skip, window_outlines=not args.no_window_outlines,
                       finder_every=args.finder_every, hands=hands, clothes=clothes)
     mirror = args.mirror if args.mirror is not None else not args.video
     src = VideoSource(args.video) if args.video else CameraSource(args.camera)

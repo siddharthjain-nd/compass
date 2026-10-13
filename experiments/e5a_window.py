@@ -50,13 +50,14 @@ def main():
     report = {"margin": args.margin, "clips": {}}
     for name, clip in CLIPS.items():
         cap = cv2.VideoCapture(str(ROOT / "clips" / f"{name}.mp4"))
+        stride = max(1, round(STRIDE * (cap.get(cv2.CAP_PROP_FPS) or 15) / 15))  # 3 pictures/s for 15 and 30 fps
         i = k = 0
         rows = []
         while True:
             ok, img = cap.read()
             if not ok:
                 break
-            if i >= clip["start"] and (i - clip["start"]) % STRIDE == 0:
+            if i >= clip["start"] and (i - clip["start"]) % stride == 0:
                 if k == 0:
                     a, b = full.start(img, clip["box"])[0], win.start(img, clip["box"])[0]
                 else:

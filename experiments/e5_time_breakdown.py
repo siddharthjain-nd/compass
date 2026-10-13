@@ -81,9 +81,12 @@ def main():
     dev = device()
     skip = "--no-skip" not in sys.argv
     window = "--window" in sys.argv
-    obj = ObjectState(StreamingTracker(video_predictor(dev), window=window), Appearance(dev), Finder(dev), Segmenter(dev),
+    encoder = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--encoder=")), "torch")
+    outlines = "--no-window-outlines" not in sys.argv
+    size = int(next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--size=")), 1024))
+    obj = ObjectState(StreamingTracker(video_predictor(dev, size), window=window, encoder=encoder), Appearance(dev), Finder(dev), Segmenter(dev, size),
                       hands=HandDetector(), clothes=ClothesSegmenter(), skip_when_still=skip,
-                      precheck="--precheck" in sys.argv)
+                      precheck="--precheck" in sys.argv, window_outlines=outlines)
     rows = []
     only = [a.split("=", 1)[1] for a in sys.argv if a.startswith("--clip=")]
     for name, clip in CLIPS.items():
@@ -141,7 +144,7 @@ def main():
     print(json.dumps(result, indent=1))
     out = ROOT / "experiments" / "output" / "e5"
     out.mkdir(parents=True, exist_ok=True)
-    tag = ('_clips' if only else '') + ('' if skip else '_noskip') + ('_window' if window else '') + ('_precheck' if '--precheck' in sys.argv else '')
+    tag = ('_clips' if only else '') + ('' if encoder == 'torch' else '_' + encoder) + ('' if outlines else '_fulloutlines') + ('' if size == 1024 else f'_{size}') + ('' if skip else '_noskip') + ('_window' if window else '') + ('_precheck' if '--precheck' in sys.argv else '')
     (out / f"time_breakdown{tag}.json").write_text(json.dumps({"summary": result, "frames": rows}, indent=1))
 
 

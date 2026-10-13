@@ -17,3 +17,4 @@ dependencies:
       - matplotlib
       - timm
       - imageio-ffmpeg   # bundled ffmpeg: re-encodes videos so Safari can play them
+      - coremltools      # Mac: EdgeTAM's image encoder on the Neural Engine (compass/coreml_encoder.py)
